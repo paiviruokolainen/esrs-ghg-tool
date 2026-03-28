@@ -163,6 +163,85 @@ body {
   min-width: 0;
 }
 
+.reporting-period-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 0.75rem;
+  margin-bottom: 1.25rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.reporting-period-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.reporting-period-select {
+  min-width: 5.5rem;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.875rem;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.reporting-period-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(30, 58, 95, 0.12);
+}
+
+.btn-compact {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.8125rem;
+}
+
+.reporting-period-new-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.reporting-period-new-wrap:not(.hidden) {
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--border);
+}
+
+.reporting-period-year-input {
+  width: 5.5rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.875rem;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+@media (min-width: 640px) {
+  .reporting-period-new-wrap {
+    width: auto;
+    margin-top: 0;
+    margin-left: auto;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .reporting-period-new-wrap:not(.hidden) {
+    padding-top: 0;
+    border-top: none;
+  }
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);

@@ -36,6 +36,29 @@
       </aside>
 
       <main class="main">
+        <div class="reporting-period-bar" id="reporting-period-bar" aria-label="Reporting period">
+          <span class="reporting-period-label">Reporting period:</span>
+          <select id="reporting-period-select" class="reporting-period-select" aria-label="Select reporting year"></select>
+          <button type="button" class="btn btn-secondary btn-compact" id="reporting-period-new">
+            + New
+          </button>
+          <div id="reporting-period-new-wrap" class="reporting-period-new-wrap hidden">
+            <input
+              id="reporting-period-year-input"
+              class="reporting-period-year-input"
+              type="number"
+              min="1990"
+              max="2100"
+              step="1"
+              placeholder="Year"
+              inputmode="numeric"
+              aria-label="New reporting year"
+            />
+            <button type="button" class="btn btn-primary btn-compact" id="reporting-period-confirm">Add</button>
+            <button type="button" class="btn btn-secondary btn-compact" id="reporting-period-cancel">Cancel</button>
+          </div>
+        </div>
+
         <section id="section-dashboard" class="panel" data-section>
           <h2>Dashboard</h2>
           <p class="panel-desc">

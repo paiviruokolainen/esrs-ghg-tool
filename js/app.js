@@ -2,8 +2,9 @@
  * GHG Protocol–aligned emissions (tCO2e) with emission factor metadata.
  */
 
-const STORAGE_KEY_V2 = "ghg-tool-emissions-v2";
-const STORAGE_KEY_V1 = "ghg-tool-emissions-v1";
+/** Single root key: periods[year] holds scope1/2/3 emissions for that reporting year */
+const STORAGE_ROOT = "ghgData";
+const LEGACY_STORAGE_KEYS = ["ghg-tool-emissions-v1", "ghg-tool-emissions-v2"];
 
 const SCOPE3_CATEGORIES = [
   { id: "cat1", name: "Purchased goods and services" },
@@ -66,30 +67,6 @@ function normalizeEntry(raw, groupId) {
   return merged;
 }
 
-function migrateFromV1(parsed) {
-  const EF = getEF();
-  const s = {
-    scope1: {
-      stationary: normalizeEntry(parsed.scope1?.stationary, "scope1-stationary"),
-      mobile: normalizeEntry(parsed.scope1?.mobile, "scope1-mobile"),
-      fugitive: normalizeEntry(parsed.scope1?.fugitive, "scope1-fugitive"),
-    },
-    scope2: {
-      locationBased: normalizeEntry(
-        parsed.scope2?.locationBased,
-        "scope2-lb"
-      ),
-      marketBased: normalizeEntry(parsed.scope2?.marketBased, "scope2-mb"),
-    },
-    scope3: {},
-  };
-  SCOPE3_CATEGORIES.forEach((c) => {
-    const gid = EF.getGroupId("scope3", c.id);
-    s.scope3[c.id] = normalizeEntry(parsed.scope3?.[c.id], gid);
-  });
-  return s;
-}
-
 function emptyState() {
   const EF = getEF();
   const s = {
@@ -108,26 +85,6 @@ function emptyState() {
     s.scope3[c.id] = emptyEntry(EF.getGroupId("scope3", c.id));
   });
   return s;
-}
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_V2);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const base = emptyState();
-      return mergeDeep(base, parsed);
-    }
-    const v1 = localStorage.getItem(STORAGE_KEY_V1);
-    if (v1) {
-      const migrated = migrateFromV1(JSON.parse(v1));
-      saveState(migrated);
-      return migrated;
-    }
-    return emptyState();
-  } catch {
-    return emptyState();
-  }
 }
 
 function mergeDeep(base, patch) {
@@ -162,9 +119,68 @@ function mergeDeep(base, patch) {
   return base;
 }
 
-function saveState(state) {
-  localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(state));
+function wipeLegacyAppStorageKeys() {
+  LEGACY_STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
 }
+
+function normalizePeriodPayload(raw) {
+  const base = emptyState();
+  if (!raw || typeof raw !== "object") return base;
+  return mergeDeep(base, raw);
+}
+
+/**
+ * @returns {{ selectedPeriod: string, periods: Record<string, ReturnType<typeof emptyState>> }}
+ */
+function loadGhgRoot() {
+  wipeLegacyAppStorageKeys();
+  const yDefault = String(new Date().getFullYear());
+  const raw = localStorage.getItem(STORAGE_ROOT);
+  if (!raw) {
+    const root = {
+      selectedPeriod: yDefault,
+      periods: { [yDefault]: emptyState() },
+    };
+    localStorage.setItem(STORAGE_ROOT, JSON.stringify(root));
+    return root;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.periods !== "object" || parsed.periods === null) {
+      const root = {
+        selectedPeriod: yDefault,
+        periods: { [yDefault]: emptyState() },
+      };
+      localStorage.setItem(STORAGE_ROOT, JSON.stringify(root));
+      return root;
+    }
+    const periods = {};
+    Object.keys(parsed.periods).forEach((yearKey) => {
+      periods[String(yearKey)] = normalizePeriodPayload(parsed.periods[yearKey]);
+    });
+    let selected = parsed.selectedPeriod != null ? String(parsed.selectedPeriod) : "";
+    if (!selected || !periods[selected]) {
+      const keys = Object.keys(periods).sort((a, b) => Number(b) - Number(a));
+      selected = keys.length ? keys[0] : yDefault;
+      if (!periods[selected]) periods[selected] = emptyState();
+    }
+    return { selectedPeriod: selected, periods };
+  } catch {
+    const root = {
+      selectedPeriod: yDefault,
+      periods: { [yDefault]: emptyState() },
+    };
+    localStorage.setItem(STORAGE_ROOT, JSON.stringify(root));
+    return root;
+  }
+}
+
+function persistGhgRoot(root) {
+  localStorage.setItem(STORAGE_ROOT, JSON.stringify(root));
+}
+
+/** Root document: selected reporting year + per-year emissions */
+let ghgRoot = null;
 
 function entryTco2e(entry) {
   const EF = getEF();
@@ -287,6 +303,15 @@ function formatTco2e(n) {
 /** @type {ReturnType<typeof emptyState>} */
 let appState = null;
 
+function syncAppStateFromRoot() {
+  if (!ghgRoot) return;
+  const p = ghgRoot.selectedPeriod;
+  if (!ghgRoot.periods[p]) {
+    ghgRoot.periods[p] = emptyState();
+  }
+  appState = ghgRoot.periods[p];
+}
+
 function readEntryFromBlock(el) {
   const mode = el.querySelector(".factor-mode")?.value || "default";
   return {
@@ -369,7 +394,7 @@ function bindEntryBlock(el) {
     if (scope === "scope1") appState.scope1[key] = e;
     else if (scope === "scope2") appState.scope2[key] = e;
     else if (scope === "scope3") appState.scope3[key] = e;
-    saveState(appState);
+    persistGhgRoot(ghgRoot);
     refreshEntryBlock(el);
     refreshDashboard();
   };
@@ -383,7 +408,7 @@ function bindEntryBlock(el) {
     if (scope === "scope1") appState.scope1[key] = e;
     else if (scope === "scope2") appState.scope2[key] = e;
     else appState.scope3[key] = e;
-    saveState(appState);
+    persistGhgRoot(ghgRoot);
     refreshEntryBlock(el);
     refreshDashboard();
   });
@@ -406,6 +431,97 @@ function escapeHtml(s) {
   const d = document.createElement("div");
   d.textContent = s;
   return d.innerHTML;
+}
+
+function sortedReportingYears() {
+  if (!ghgRoot || !ghgRoot.periods) return [];
+  return Object.keys(ghgRoot.periods).sort((a, b) => Number(b) - Number(a));
+}
+
+function refreshReportingPeriodSelect() {
+  const sel = document.getElementById("reporting-period-select");
+  if (!sel || !ghgRoot) return;
+  const years = sortedReportingYears();
+  sel.innerHTML = years
+    .map((y) => `<option value="${escapeHtml(y)}">${escapeHtml(y)}</option>`)
+    .join("");
+  sel.value = ghgRoot.selectedPeriod;
+  if (years.length && !years.includes(ghgRoot.selectedPeriod)) {
+    ghgRoot.selectedPeriod = years[0];
+    sel.value = ghgRoot.selectedPeriod;
+    syncAppStateFromRoot();
+    persistGhgRoot(ghgRoot);
+  }
+}
+
+function setReportingPeriodNewFormVisible(show) {
+  const wrap = document.getElementById("reporting-period-new-wrap");
+  const input = document.getElementById("reporting-period-year-input");
+  if (!wrap) return;
+  wrap.classList.toggle("hidden", !show);
+  if (show && input) {
+    input.value = "";
+    input.focus();
+  }
+}
+
+function initReportingPeriodBar() {
+  const sel = document.getElementById("reporting-period-select");
+  const btnNew = document.getElementById("reporting-period-new");
+  const input = document.getElementById("reporting-period-year-input");
+  const btnConfirm = document.getElementById("reporting-period-confirm");
+  const btnCancel = document.getElementById("reporting-period-cancel");
+  const wrap = document.getElementById("reporting-period-new-wrap");
+
+  refreshReportingPeriodSelect();
+
+  sel?.addEventListener("change", () => {
+    const next = sel.value;
+    if (!next || next === ghgRoot.selectedPeriod) return;
+    ghgRoot.selectedPeriod = next;
+    syncAppStateFromRoot();
+    persistGhgRoot(ghgRoot);
+    renderScope1Entries();
+    renderScope2Entries();
+    renderScope3Fields();
+    refreshDashboard();
+  });
+
+  btnNew?.addEventListener("click", () => {
+    setReportingPeriodNewFormVisible(wrap?.classList.contains("hidden"));
+  });
+
+  btnCancel?.addEventListener("click", () => setReportingPeriodNewFormVisible(false));
+
+  function confirmNewPeriod() {
+    const raw = (input?.value || "").trim();
+    const y = parseInt(raw, 10);
+    if (!Number.isFinite(y) || y < 1990 || y > 2100) {
+      showToast("Enter a valid year between 1990 and 2100.");
+      return;
+    }
+    const key = String(y);
+    if (!ghgRoot.periods[key]) {
+      ghgRoot.periods[key] = emptyState();
+    }
+    ghgRoot.selectedPeriod = key;
+    persistGhgRoot(ghgRoot);
+    syncAppStateFromRoot();
+    refreshReportingPeriodSelect();
+    setReportingPeriodNewFormVisible(false);
+    renderScope1Entries();
+    renderScope2Entries();
+    renderScope3Fields();
+    refreshDashboard();
+  }
+
+  btnConfirm?.addEventListener("click", confirmNewPeriod);
+  input?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      confirmNewPeriod();
+    }
+  });
 }
 
 function entryBlockHtml(scope, key, title) {
@@ -852,11 +968,14 @@ function init() {
     console.error("EmissionFactors module missing");
     return;
   }
-  appState = loadState();
+  ghgRoot = loadGhgRoot();
+  syncAppStateFromRoot();
+  persistGhgRoot(ghgRoot);
   renderFactorLibrary();
   renderScope1Entries();
   renderScope2Entries();
   renderScope3Fields();
+  initReportingPeriodBar();
   initNavigation();
   initPdfButton();
   refreshDashboard();

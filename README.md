@@ -46,10 +46,10 @@ with no coding background — and what the real limitations are.
 **Test version — not for real reporting use.**
 
 - UI complete and functional
-- Emission factors served from Supabase database
-- Emissions data still stored in localStorage pending auth
-- Supabase database integration in progress
-- User authentication not yet implemented
+- Supabase database connected
+- User authentication working (email/password)
+- Emissions data saved per user and reporting period
+- Reporting periods managed in database
 - Emission factor values are illustrative — 
   jurisdiction-specific factors needed for real reporting
 
@@ -89,8 +89,6 @@ git clone https://github.com/paiviruokolainen/ghg-tool.git
 
 ## Roadmap
 
-- [ ] Supabase database integration
-- [ ] User authentication and multi-user support
 - [ ] Per-user private emission factors
 - [ ] DESNZ 2024 emission factor dataset
 - [ ] Year-on-year comparison view

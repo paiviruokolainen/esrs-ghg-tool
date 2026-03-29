@@ -10,7 +10,7 @@ import { initAuth } from "./auth.js";
 import { supabase } from "./supabase.js";
 
 
-/** Single root key: periods[year] holds scope1/2/3 emissions for that reporting year */
+/** localStorage holds emissions only: { periods: { [year]: scope data } }. Reporting years list + selection come from Supabase. */
 const STORAGE_ROOT = "ghgData";
 const LEGACY_STORAGE_KEYS = ["ghg-tool-emissions-v1", "ghg-tool-emissions-v2"];
 
@@ -138,53 +138,34 @@ function normalizePeriodPayload(raw) {
 }
 
 /**
- * @returns {{ selectedPeriod: string, periods: Record<string, ReturnType<typeof emptyState>> }}
+ * @returns {{ selectedPeriod: string, periods: Record<string, ReturnType<typeof emptyState>>, supabaseYears: string[] }}
  */
 function loadGhgRoot() {
   wipeLegacyAppStorageKeys();
-  const yDefault = String(new Date().getFullYear());
   const raw = localStorage.getItem(STORAGE_ROOT);
   if (!raw) {
-    const root = {
-      selectedPeriod: yDefault,
-      periods: { [yDefault]: emptyState() },
-    };
-    localStorage.setItem(STORAGE_ROOT, JSON.stringify(root));
-    return root;
+    return { selectedPeriod: "", periods: {}, supabaseYears: [] };
   }
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.periods !== "object" || parsed.periods === null) {
-      const root = {
-        selectedPeriod: yDefault,
-        periods: { [yDefault]: emptyState() },
-      };
-      localStorage.setItem(STORAGE_ROOT, JSON.stringify(root));
-      return root;
+      return { selectedPeriod: "", periods: {}, supabaseYears: [] };
     }
     const periods = {};
     Object.keys(parsed.periods).forEach((yearKey) => {
       periods[String(yearKey)] = normalizePeriodPayload(parsed.periods[yearKey]);
     });
-    let selected = parsed.selectedPeriod != null ? String(parsed.selectedPeriod) : "";
-    if (!selected || !periods[selected]) {
-      const keys = Object.keys(periods).sort((a, b) => Number(b) - Number(a));
-      selected = keys.length ? keys[0] : yDefault;
-      if (!periods[selected]) periods[selected] = emptyState();
-    }
-    return { selectedPeriod: selected, periods };
+    return { selectedPeriod: "", periods, supabaseYears: [] };
   } catch {
-    const root = {
-      selectedPeriod: yDefault,
-      periods: { [yDefault]: emptyState() },
-    };
-    localStorage.setItem(STORAGE_ROOT, JSON.stringify(root));
-    return root;
+    return { selectedPeriod: "", periods: {}, supabaseYears: [] };
   }
 }
 
 function persistGhgRoot(root) {
-  localStorage.setItem(STORAGE_ROOT, JSON.stringify(root));
+  localStorage.setItem(
+    STORAGE_ROOT,
+    JSON.stringify({ periods: root.periods })
+  );
 }
 
 /** Root document: selected reporting year + per-year emissions */
@@ -314,10 +295,42 @@ let appState = null;
 function syncAppStateFromRoot() {
   if (!ghgRoot) return;
   const p = ghgRoot.selectedPeriod;
+  if (!p) {
+    appState = emptyState();
+    return;
+  }
   if (!ghgRoot.periods[p]) {
     ghgRoot.periods[p] = emptyState();
   }
   appState = ghgRoot.periods[p];
+}
+
+async function fetchReportingPeriodsFromSupabase() {
+  if (!ghgRoot) return;
+  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  if (userErr || !userData?.user) {
+    ghgRoot.supabaseYears = [];
+    ghgRoot.selectedPeriod = "";
+    return;
+  }
+  const userId = userData.user.id;
+  const { data: rows, error } = await supabase
+    .from("reporting_periods")
+    .select("id, year")
+    .eq("user_id", userId)
+    .order("year", { ascending: false });
+  if (error) {
+    console.error("reporting_periods:", error);
+    ghgRoot.supabaseYears = [];
+    ghgRoot.selectedPeriod = "";
+    return;
+  }
+  const years = (rows || []).map((r) => String(r.year));
+  ghgRoot.supabaseYears = years;
+  for (const y of years) {
+    if (!ghgRoot.periods[y]) ghgRoot.periods[y] = emptyState();
+  }
+  ghgRoot.selectedPeriod = years.length > 0 ? years[0] : "";
 }
 
 function readEntryFromBlock(el) {
@@ -448,8 +461,10 @@ function escapeHtml(s) {
 }
 
 function sortedReportingYears() {
-  if (!ghgRoot || !ghgRoot.periods) return [];
-  return Object.keys(ghgRoot.periods).sort((a, b) => Number(b) - Number(a));
+  if (!ghgRoot || !Array.isArray(ghgRoot.supabaseYears)) return [];
+  return [...ghgRoot.supabaseYears].sort(
+    (a, b) => Number(b) - Number(a)
+  );
 }
 
 function refreshReportingPeriodSelect() {
@@ -464,7 +479,6 @@ function refreshReportingPeriodSelect() {
     ghgRoot.selectedPeriod = years[0];
     sel.value = ghgRoot.selectedPeriod;
     syncAppStateFromRoot();
-    persistGhgRoot(ghgRoot);
   }
 }
 
@@ -494,7 +508,6 @@ function initReportingPeriodBar() {
     if (!next || next === ghgRoot.selectedPeriod) return;
     ghgRoot.selectedPeriod = next;
     syncAppStateFromRoot();
-    persistGhgRoot(ghgRoot);
     renderScope1Entries();
     renderScope2Entries();
     renderScope3Fields();
@@ -507,7 +520,7 @@ function initReportingPeriodBar() {
 
   btnCancel?.addEventListener("click", () => setReportingPeriodNewFormVisible(false));
 
-  function confirmNewPeriod() {
+  async function confirmNewPeriod() {
     const raw = (input?.value || "").trim();
     const y = parseInt(raw, 10);
     if (!Number.isFinite(y) || y < 1990 || y > 2100) {
@@ -515,9 +528,34 @@ function initReportingPeriodBar() {
       return;
     }
     const key = String(y);
-    if (!ghgRoot.periods[key]) {
-      ghgRoot.periods[key] = emptyState();
+    if (ghgRoot.supabaseYears.includes(key)) {
+      showToast("Reporting period already exists");
+      return;
     }
+    const { data: userData, error: userErr } = await supabase.auth.getUser();
+    if (userErr || !userData?.user) return;
+    const { error } = await supabase.from("reporting_periods").insert({
+      user_id: userData.user.id,
+      year: y,
+    });
+    if (error) {
+      if (
+        error.code === "23505" ||
+        String(error.message || "")
+          .toLowerCase()
+          .includes("duplicate") ||
+        error.code === "409"
+      ) {
+        showToast("Reporting period already exists");
+      } else {
+        console.error("reporting_periods insert:", error);
+      }
+      return;
+    }
+    ghgRoot.supabaseYears = [...ghgRoot.supabaseYears, key].sort(
+      (a, b) => Number(b) - Number(a)
+    );
+    if (!ghgRoot.periods[key]) ghgRoot.periods[key] = emptyState();
     ghgRoot.selectedPeriod = key;
     persistGhgRoot(ghgRoot);
     syncAppStateFromRoot();
@@ -529,11 +567,11 @@ function initReportingPeriodBar() {
     refreshDashboard();
   }
 
-  btnConfirm?.addEventListener("click", confirmNewPeriod);
+  btnConfirm?.addEventListener("click", () => void confirmNewPeriod());
   input?.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
-      confirmNewPeriod();
+      void confirmNewPeriod();
     }
   });
 }
@@ -1004,6 +1042,7 @@ async function bootstrapApp() {
     return;
   }
   ghgRoot = loadGhgRoot();
+  await fetchReportingPeriodsFromSupabase();
   syncAppStateFromRoot();
   persistGhgRoot(ghgRoot);
   renderFactorLibrary();

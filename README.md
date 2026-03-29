@@ -46,7 +46,8 @@ with no coding background — and what the real limitations are.
 **Test version — not for real reporting use.**
 
 - UI complete and functional
-- Data stored in browser localStorage (per device only)
+- Emission factors served from Supabase database
+- Emissions data still stored in localStorage pending auth
 - Supabase database integration in progress
 - User authentication not yet implemented
 - Emission factor values are illustrative — 

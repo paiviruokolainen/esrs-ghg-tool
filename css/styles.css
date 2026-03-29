@@ -105,6 +105,58 @@ body {
   border-color: var(--text-muted);
 }
 
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: var(--bg);
+}
+
+.auth-card.panel {
+  width: 100%;
+  max-width: 400px;
+  margin: 0;
+}
+
+.auth-heading {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.auth-message {
+  margin: 0 0 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.auth-message--success {
+  color: var(--success);
+}
+
+.auth-message--error {
+  color: #b45309;
+}
+
+.user-email {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .layout {
   display: flex;
   max-width: 1200px;
@@ -410,7 +462,9 @@ body {
   font-weight: 400;
 }
 
-.field input[type="number"] {
+.field input[type="number"],
+.field input[type="email"],
+.field input[type="password"] {
   padding: 0.55rem 0.75rem;
   font-size: 0.95rem;
   font-family: inherit;
@@ -421,7 +475,9 @@ body {
   max-width: 280px;
 }
 
-.field input[type="number"]:focus {
+.field input[type="number"]:focus,
+.field input[type="email"]:focus,
+.field input[type="password"]:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.12);

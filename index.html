@@ -7,6 +7,37 @@
     <link rel="stylesheet" href="css/styles.css" />
   </head>
   <body>
+    <div id="auth-screen" class="auth-screen">
+      <div class="auth-card panel">
+        <h2 class="auth-heading">Sign in to GHG emissions data</h2>
+        <p id="auth-success" class="auth-message auth-message--success hidden" role="status"></p>
+        <p id="auth-error" class="auth-message auth-message--error hidden" role="alert"></p>
+        <div class="field">
+          <label for="auth-email">Email</label>
+          <input
+            id="auth-email"
+            type="email"
+            autocomplete="email"
+            placeholder="you@company.com"
+          />
+        </div>
+        <div class="field">
+          <label for="auth-password">Password</label>
+          <input
+            id="auth-password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="Password"
+          />
+        </div>
+        <div class="auth-actions">
+          <button type="button" class="btn btn-primary" id="auth-sign-in">Sign in</button>
+          <button type="button" class="btn btn-secondary" id="auth-sign-up">Sign up</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="app-root" class="hidden">
     <header class="app-header">
       <div>
         <h1 class="app-title">GHG emissions data</h1>
@@ -15,6 +46,8 @@
         </p>
       </div>
       <div class="header-actions">
+        <span id="user-email" class="user-email" aria-live="polite"></span>
+        <button type="button" class="btn btn-secondary" id="btn-sign-out">Sign out</button>
         <button type="button" class="btn btn-secondary" id="btn-download-pdf">
           Download PDF report
         </button>
@@ -157,6 +190,7 @@
           <div class="scope3-grid" id="scope3-fields"></div>
         </section>
       </main>
+    </div>
     </div>
 
     <script src="js/jspdf.umd.min.js"></script>

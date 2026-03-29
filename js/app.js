@@ -6,6 +6,7 @@ import {
   applyEmissionFactorsFromRows,
   isEmissionFactorsLoading,
 } from "./emission-factors.js";
+import { initAuth } from "./auth.js";
 import { supabase } from "./supabase.js";
 
 
@@ -997,7 +998,7 @@ function initPdfButton() {
   if (btn) btn.addEventListener("click", buildPdfReport);
 }
 
-async function init() {
+async function bootstrapApp() {
   if (!window.EmissionFactors) {
     console.error("EmissionFactors module missing");
     return;
@@ -1030,8 +1031,4 @@ async function init() {
   refreshDashboard();
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", () => void init());
-} else {
-  void init();
-}
+initAuth(bootstrapApp);

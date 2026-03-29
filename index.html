@@ -162,7 +162,10 @@
         </section>
 
         <section id="section-scope1" class="panel hidden" data-section>
-          <h2>Scope 1 — Direct emissions</h2>
+          <div class="scope-panel-header">
+            <h2>Scope 1 — Direct emissions</h2>
+            <button type="button" class="btn btn-primary btn-compact" id="btn-save-scope1">Save</button>
+          </div>
           <p class="panel-desc">
             Enter <strong>activity</strong> in the units shown for the selected factor. Emissions (tCO2e) =
             activity × (kg CO2e per unit) ÷ 1000. Choose a built-in factor or enter your own with a source
@@ -172,7 +175,10 @@
         </section>
 
         <section id="section-scope2" class="panel hidden" data-section>
-          <h2>Scope 2 — Indirect emissions from energy</h2>
+          <div class="scope-panel-header">
+            <h2>Scope 2 — Indirect emissions from energy</h2>
+            <button type="button" class="btn btn-primary btn-compact" id="btn-save-scope2">Save</button>
+          </div>
           <p class="panel-desc">
             Report <strong>location-based</strong> and <strong>market-based</strong> electricity separately.
             For a single-method inventory, use one line and leave the other at zero activity. The dashboard
@@ -182,7 +188,10 @@
         </section>
 
         <section id="section-scope3" class="panel hidden" data-section>
-          <h2>Scope 3 — Value chain emissions</h2>
+          <div class="scope-panel-header">
+            <h2>Scope 3 — Value chain emissions</h2>
+            <button type="button" class="btn btn-primary btn-compact" id="btn-save-scope3">Save</button>
+          </div>
           <p class="panel-desc">
             Fifteen categories per the Corporate Value Chain (Scope 3) Standard. Each category has an
             illustrative default factor; replace with supplier-specific or hybrid factors as needed.

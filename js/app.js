@@ -10,9 +10,8 @@ import { initAuth } from "./auth.js";
 import { supabase } from "./supabase.js";
 
 
-/** localStorage holds emissions only: { periods: { [year]: scope data } }. Reporting years list + selection come from Supabase. */
-const STORAGE_ROOT = "ghgData";
 const LEGACY_STORAGE_KEYS = ["ghg-tool-emissions-v1", "ghg-tool-emissions-v2"];
+const STORAGE_GHG_DATA = "ghgData";
 
 const SCOPE3_CATEGORIES = [
   { id: "cat1", name: "Purchased goods and services" },
@@ -129,6 +128,7 @@ function mergeDeep(base, patch) {
 
 function wipeLegacyAppStorageKeys() {
   LEGACY_STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
+  localStorage.removeItem(STORAGE_GHG_DATA);
 }
 
 function normalizePeriodPayload(raw) {
@@ -137,35 +137,13 @@ function normalizePeriodPayload(raw) {
   return mergeDeep(base, raw);
 }
 
-/**
- * @returns {{ selectedPeriod: string, periods: Record<string, ReturnType<typeof emptyState>>, supabaseYears: string[] }}
- */
-function loadGhgRoot() {
-  wipeLegacyAppStorageKeys();
-  const raw = localStorage.getItem(STORAGE_ROOT);
-  if (!raw) {
-    return { selectedPeriod: "", periods: {}, supabaseYears: [] };
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed.periods !== "object" || parsed.periods === null) {
-      return { selectedPeriod: "", periods: {}, supabaseYears: [] };
-    }
-    const periods = {};
-    Object.keys(parsed.periods).forEach((yearKey) => {
-      periods[String(yearKey)] = normalizePeriodPayload(parsed.periods[yearKey]);
-    });
-    return { selectedPeriod: "", periods, supabaseYears: [] };
-  } catch {
-    return { selectedPeriod: "", periods: {}, supabaseYears: [] };
-  }
-}
-
-function persistGhgRoot(root) {
-  localStorage.setItem(
-    STORAGE_ROOT,
-    JSON.stringify({ periods: root.periods })
-  );
+function createEmptyGhgRoot() {
+  return {
+    selectedPeriod: "",
+    periods: {},
+    supabaseYears: [],
+    periodIdByYear: {},
+  };
 }
 
 /** Root document: selected reporting year + per-year emissions */
@@ -311,6 +289,7 @@ async function fetchReportingPeriodsFromSupabase() {
   if (userErr || !userData?.user) {
     ghgRoot.supabaseYears = [];
     ghgRoot.selectedPeriod = "";
+    ghgRoot.periodIdByYear = {};
     return;
   }
   const userId = userData.user.id;
@@ -323,14 +302,197 @@ async function fetchReportingPeriodsFromSupabase() {
     console.error("reporting_periods:", error);
     ghgRoot.supabaseYears = [];
     ghgRoot.selectedPeriod = "";
+    ghgRoot.periodIdByYear = {};
     return;
   }
   const years = (rows || []).map((r) => String(r.year));
   ghgRoot.supabaseYears = years;
+  ghgRoot.periodIdByYear = {};
+  (rows || []).forEach((r) => {
+    ghgRoot.periodIdByYear[String(r.year)] = r.id;
+  });
   for (const y of years) {
     if (!ghgRoot.periods[y]) ghgRoot.periods[y] = emptyState();
   }
   ghgRoot.selectedPeriod = years.length > 0 ? years[0] : "";
+}
+
+function categoryToGroupId(scope, category) {
+  if (scope === "scope1") return `scope1-${category}`;
+  if (scope === "scope2") {
+    if (category === "locationBased") return "scope2-lb";
+    if (category === "marketBased") return "scope2-mb";
+  }
+  if (scope === "scope3") return `scope3-${category}`;
+  return "";
+}
+
+function rowToEntry(row, groupId) {
+  const d = emptyEntry(groupId);
+  const activityVal = row.activity_value ?? row.activityValue;
+  d.activity =
+    activityVal !== null && activityVal !== undefined && activityVal !== ""
+      ? String(activityVal)
+      : "";
+  const factorId = row.emission_factor_id ?? row.emissionFactorId;
+  const efVer = row.ef_version_used ?? row.efVersionUsed ?? "";
+  const customVal = row.custom_ef_value ?? row.customEfValue;
+  if (efVer === "custom") {
+    d.factorMode = "custom";
+    d.factorId = "";
+    d.customFactorKgPerUnit =
+      customVal != null && customVal !== "" ? String(customVal) : "";
+    d.customUnitLabel = row.custom_ef_unit ?? row.customEfUnit ?? "";
+    d.customSourceNote = row.custom_ef_source ?? row.customEfSource ?? "";
+  } else {
+    d.factorMode = "default";
+    d.factorId = factorId != null && factorId !== "" ? String(factorId) : "";
+  }
+  const tco2e = row.tco2e_result ?? row.tco2eResult;
+  if (parseNum(d.activity) <= 0 && parseNum(tco2e) > 0) {
+    d.legacyTco2e = String(parseNum(tco2e));
+  }
+  return d;
+}
+
+function emissionsRowsToState(rows) {
+  const state = emptyState();
+  for (const row of rows) {
+    const scope = row.scope;
+    const cat = row.category;
+    const gid = categoryToGroupId(scope, cat);
+    const entry = rowToEntry(row, gid);
+    if (scope === "scope1" && state.scope1[cat] !== undefined) {
+      state.scope1[cat] = entry;
+    } else if (scope === "scope2" && state.scope2[cat] !== undefined) {
+      state.scope2[cat] = entry;
+    } else if (scope === "scope3" && state.scope3[cat] !== undefined) {
+      state.scope3[cat] = entry;
+    }
+  }
+  return state;
+}
+
+async function fetchEmissionsForSelectedPeriod() {
+  if (!ghgRoot) return;
+  const year = ghgRoot.selectedPeriod;
+  if (!year) {
+    syncAppStateFromRoot();
+    return;
+  }
+  const periodId = ghgRoot.periodIdByYear[year];
+  if (!periodId) {
+    ghgRoot.periods[year] = emptyState();
+    syncAppStateFromRoot();
+    return;
+  }
+  const { data: rows, error } = await supabase
+    .from("emissions_data")
+    .select("*")
+    .eq("reporting_period_id", periodId);
+  if (error) {
+    console.error("emissions_data:", error);
+    return;
+  }
+  ghgRoot.periods[year] = emissionsRowsToState(rows || []);
+  syncAppStateFromRoot();
+}
+
+function buildEmissionRow(entry, scope, category, reportingPeriodId, userId) {
+  const EF = getEF();
+  const tco2e = entryTco2e(entry);
+  let emission_factor_id = null;
+  let ef_version_used = "";
+  let custom_ef_value = null;
+  let custom_ef_unit = null;
+  let custom_ef_source = null;
+  if (entry.factorMode === "custom") {
+    ef_version_used = "custom";
+    const v = parseNum(entry.customFactorKgPerUnit);
+    custom_ef_value = Number.isFinite(v) ? v : null;
+    custom_ef_unit = entry.customUnitLabel || null;
+    custom_ef_source = entry.customSourceNote || null;
+  } else {
+    emission_factor_id = entry.factorId || null;
+    const def = entry.factorId ? EF.getFactorById(entry.factorId) : null;
+    ef_version_used = def ? String(def.year) : "";
+  }
+  return {
+    reporting_period_id: reportingPeriodId,
+    user_id: userId,
+    scope,
+    category,
+    activity_value: parseNum(entry.activity),
+    emission_factor_id,
+    ef_version_used,
+    custom_ef_value,
+    custom_ef_unit,
+    custom_ef_source,
+    tco2e_result: tco2e,
+  };
+}
+
+async function saveEmissionsScope(scopeKey) {
+  const year = ghgRoot?.selectedPeriod;
+  const periodId = year ? ghgRoot.periodIdByYear[year] : null;
+  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  if (userErr || !userData?.user || !periodId || !year) {
+    showToast("Cannot save.");
+    return;
+  }
+  const userId = userData.user.id;
+  const st = ghgRoot.periods[year];
+  if (!st) return;
+
+  const { error: delErr } = await supabase
+    .from("emissions_data")
+    .delete()
+    .eq("reporting_period_id", periodId)
+    .eq("scope", scopeKey);
+  if (delErr) {
+    console.error("emissions_data delete:", delErr);
+    return;
+  }
+
+  const rows = [];
+  if (scopeKey === "scope1") {
+    ["stationary", "mobile", "fugitive"].forEach((cat) => {
+      rows.push(
+        buildEmissionRow(st.scope1[cat], "scope1", cat, periodId, userId)
+      );
+    });
+  } else if (scopeKey === "scope2") {
+    ["locationBased", "marketBased"].forEach((cat) => {
+      rows.push(
+        buildEmissionRow(st.scope2[cat], "scope2", cat, periodId, userId)
+      );
+    });
+  } else if (scopeKey === "scope3") {
+    SCOPE3_CATEGORIES.forEach((c) => {
+      rows.push(
+        buildEmissionRow(st.scope3[c.id], "scope3", c.id, periodId, userId)
+      );
+    });
+  }
+
+  const { error: insErr } = await supabase.from("emissions_data").insert(rows);
+  if (insErr) {
+    console.error("emissions_data insert:", insErr);
+    return;
+  }
+  showToast("Saved");
+}
+
+function initScopeSaveButtons() {
+  document
+    .getElementById("btn-save-scope1")
+    ?.addEventListener("click", () => void saveEmissionsScope("scope1"));
+  document
+    .getElementById("btn-save-scope2")
+    ?.addEventListener("click", () => void saveEmissionsScope("scope2"));
+  document
+    .getElementById("btn-save-scope3")
+    ?.addEventListener("click", () => void saveEmissionsScope("scope3"));
 }
 
 function readEntryFromBlock(el) {
@@ -415,7 +577,6 @@ function bindEntryBlock(el) {
     if (scope === "scope1") appState.scope1[key] = e;
     else if (scope === "scope2") appState.scope2[key] = e;
     else if (scope === "scope3") appState.scope3[key] = e;
-    persistGhgRoot(ghgRoot);
     refreshEntryBlock(el);
     refreshDashboard();
   };
@@ -429,7 +590,6 @@ function bindEntryBlock(el) {
     if (scope === "scope1") appState.scope1[key] = e;
     else if (scope === "scope2") appState.scope2[key] = e;
     else appState.scope3[key] = e;
-    persistGhgRoot(ghgRoot);
     refreshEntryBlock(el);
     refreshDashboard();
   });
@@ -504,14 +664,17 @@ function initReportingPeriodBar() {
   refreshReportingPeriodSelect();
 
   sel?.addEventListener("change", () => {
-    const next = sel.value;
-    if (!next || next === ghgRoot.selectedPeriod) return;
-    ghgRoot.selectedPeriod = next;
-    syncAppStateFromRoot();
-    renderScope1Entries();
-    renderScope2Entries();
-    renderScope3Fields();
-    refreshDashboard();
+    void (async () => {
+      const next = sel.value;
+      if (!next || next === ghgRoot.selectedPeriod) return;
+      ghgRoot.selectedPeriod = next;
+      await fetchEmissionsForSelectedPeriod();
+      syncAppStateFromRoot();
+      renderScope1Entries();
+      renderScope2Entries();
+      renderScope3Fields();
+      refreshDashboard();
+    })();
   });
 
   btnNew?.addEventListener("click", () => {
@@ -534,10 +697,14 @@ function initReportingPeriodBar() {
     }
     const { data: userData, error: userErr } = await supabase.auth.getUser();
     if (userErr || !userData?.user) return;
-    const { error } = await supabase.from("reporting_periods").insert({
-      user_id: userData.user.id,
-      year: y,
-    });
+    const { data: inserted, error } = await supabase
+      .from("reporting_periods")
+      .insert({
+        user_id: userData.user.id,
+        year: y,
+      })
+      .select("id, year")
+      .single();
     if (error) {
       if (
         error.code === "23505" ||
@@ -552,12 +719,13 @@ function initReportingPeriodBar() {
       }
       return;
     }
+    ghgRoot.periodIdByYear[key] = inserted.id;
     ghgRoot.supabaseYears = [...ghgRoot.supabaseYears, key].sort(
       (a, b) => Number(b) - Number(a)
     );
     if (!ghgRoot.periods[key]) ghgRoot.periods[key] = emptyState();
     ghgRoot.selectedPeriod = key;
-    persistGhgRoot(ghgRoot);
+    await fetchEmissionsForSelectedPeriod();
     syncAppStateFromRoot();
     refreshReportingPeriodSelect();
     setReportingPeriodNewFormVisible(false);
@@ -1041,10 +1209,10 @@ async function bootstrapApp() {
     console.error("EmissionFactors module missing");
     return;
   }
-  ghgRoot = loadGhgRoot();
+  wipeLegacyAppStorageKeys();
+  ghgRoot = createEmptyGhgRoot();
   await fetchReportingPeriodsFromSupabase();
   syncAppStateFromRoot();
-  persistGhgRoot(ghgRoot);
   renderFactorLibrary();
   renderScope1Entries();
   renderScope2Entries();
@@ -1052,6 +1220,7 @@ async function bootstrapApp() {
   initReportingPeriodBar();
   initNavigation();
   initPdfButton();
+  initScopeSaveButtons();
   refreshDashboard();
 
   try {
@@ -1063,6 +1232,7 @@ async function bootstrapApp() {
     applyEmissionFactorsFromRows([]);
   }
 
+  await fetchEmissionsForSelectedPeriod();
   renderFactorLibrary();
   renderScope1Entries();
   renderScope2Entries();

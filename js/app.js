@@ -2,6 +2,13 @@
  * GHG Protocol–aligned emissions (tCO2e) with emission factor metadata.
  */
 
+import {
+  applyEmissionFactorsFromRows,
+  isEmissionFactorsLoading,
+} from "./emission-factors.js";
+import { supabase } from "./supabase.js";
+
+
 /** Single root key: periods[year] holds scope1/2/3 emissions for that reporting year */
 const STORAGE_ROOT = "ghgData";
 const LEGACY_STORAGE_KEYS = ["ghg-tool-emissions-v1", "ghg-tool-emissions-v2"];
@@ -416,13 +423,19 @@ function bindEntryBlock(el) {
 }
 
 function buildFactorSelect(groupId, selectedId) {
+  if (isEmissionFactorsLoading()) {
+    return `<option value="" disabled selected>Loading factors...</option>`;
+  }
   const list = getEF().getFactorsByGroup(groupId);
+  if (list.length === 0) {
+    return `<option value="" disabled selected>No factors for this group</option>`;
+  }
   return list
     .map(
       (f) =>
-        `<option value="${f.id}" ${f.id === selectedId ? "selected" : ""}>${escapeHtml(
-          f.label
-        )}</option>`
+        `<option value="${escapeHtml(f.id)}" ${
+          f.id === selectedId ? "selected" : ""
+        }>${escapeHtml(f.label)}</option>`
     )
     .join("");
 }
@@ -637,6 +650,27 @@ function renderScope3Fields() {
 function renderFactorLibrary() {
   const root = document.getElementById("factor-library-root");
   if (!root) return;
+  if (isEmissionFactorsLoading()) {
+    root.innerHTML = `
+    <div class="table-scroll">
+      <table class="factor-table">
+        <thead>
+          <tr>
+            <th>Group</th>
+            <th>Factor</th>
+            <th>kg CO2e / unit</th>
+            <th>Activity unit</th>
+            <th>Source</th>
+            <th>Year</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="6">Loading factors...</td></tr></tbody>
+      </table>
+    </div>
+    <p class="panel-desc" style="margin-top:1rem;margin-bottom:0">Figures are illustrative defaults for tool demonstration; use jurisdiction-specific factors for statutory reporting.</p>
+  `;
+    return;
+  }
   const lib = getEF().EMISSION_FACTOR_LIBRARY;
   const rows = lib
     .map(
@@ -963,7 +997,7 @@ function initPdfButton() {
   if (btn) btn.addEventListener("click", buildPdfReport);
 }
 
-function init() {
+async function init() {
   if (!window.EmissionFactors) {
     console.error("EmissionFactors module missing");
     return;
@@ -979,10 +1013,25 @@ function init() {
   initNavigation();
   initPdfButton();
   refreshDashboard();
+
+  try {
+    const { data, error } = await supabase.from("emission_factors").select("*");
+    if (error) throw error;
+    applyEmissionFactorsFromRows(data ?? []);
+  } catch (err) {
+    console.error("Supabase emission_factors:", err);
+    applyEmissionFactorsFromRows([]);
+  }
+
+  renderFactorLibrary();
+  renderScope1Entries();
+  renderScope2Entries();
+  renderScope3Fields();
+  refreshDashboard();
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
+  document.addEventListener("DOMContentLoaded", () => void init());
 } else {
-  init();
+  void init();
 }

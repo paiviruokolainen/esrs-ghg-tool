@@ -75,6 +75,21 @@ git clone https://github.com/paiviruokolainen/ghg-tool.git
 
 ---
 
+## Live demo
+
+Deployed at: https://ghg-tool-xi.vercel.app/
+
+To test:
+1. Open the URL
+2. Sign up with your email
+3. Verify your email
+4. Sign in and start entering data
+
+Note: This is a test version. 
+Not for real reporting use.
+
+---
+
 ## Known limitations
 
 - Data is stored in your browser only — clearing browser 

@@ -52,6 +52,8 @@ with no coding background — and what the real limitations are.
 - Reporting periods managed in database
 - Emission factor values are illustrative — 
   jurisdiction-specific factors needed for real reporting
+- Natural language emission factor search powered 
+  by RAG (OpenAI embeddings + pgvector)
 
 ---
 

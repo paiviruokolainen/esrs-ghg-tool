@@ -8,6 +8,7 @@ import {
 } from "./emission-factors.js";
 import { initAuth } from "./auth.js";
 import { supabase } from "./supabase.js";
+import { searchEmissionFactors } from "./rag-search.js";
 
 
 const LEGACY_STORAGE_KEYS = ["ghg-tool-emissions-v1", "ghg-tool-emissions-v2"];
@@ -594,6 +595,9 @@ function bindEntryBlock(el) {
     refreshDashboard();
   });
   el.querySelector(".factor-library-select")?.addEventListener("change", apply);
+  el.querySelector(".btn-find-factor")?.addEventListener("click", () => {
+    openFactorSearchModal(el);
+  });
 }
 
 function buildFactorSelect(groupId, selectedId) {
@@ -777,7 +781,10 @@ function entryBlockHtml(scope, key, title) {
       <div class="factor-default-panel ${entry.factorMode === "custom" ? "hidden" : ""}">
         <div class="field">
           <label>Library factor</label>
-          <select class="factor-library-select">${selOptions}</select>
+          <div class="factor-picker-row">
+            <select class="factor-library-select">${selOptions}</select>
+            <button type="button" class="btn btn-secondary btn-compact btn-find-factor">Find a factor</button>
+          </div>
         </div>
         <p class="factor-details"></p>
       </div>
@@ -974,6 +981,193 @@ function showToast(message) {
   t.classList.add("visible");
   clearTimeout(showToast._timer);
   showToast._timer = setTimeout(() => t.classList.remove("visible"), 2600);
+}
+
+let factorSearchModalState = {
+  root: null,
+  currentEntryBlock: null,
+  /** @type {{ scope: string, key: string } | null} */
+  entryScopeKey: null,
+};
+
+function resolveFactorSearchEntryBlock() {
+  let entry = factorSearchModalState.currentEntryBlock;
+  if (entry && entry.isConnected) return entry;
+  const sk = factorSearchModalState.entryScopeKey;
+  if (sk?.scope && sk?.key) {
+    entry = document.querySelector(
+      `.entry-block[data-scope="${sk.scope}"][data-key="${sk.key}"]`
+    );
+  }
+  return entry || null;
+}
+
+/**
+ * Ensures the library <select> has an <option> for factorId so .value can be set.
+ * Search can return factors outside the row's group; those IDs are missing from the dropdown until added.
+ */
+function ensureSelectHasFactorOption(select, factorId, labelFallback) {
+  if (!factorId) return;
+  if (Array.from(select.options).some((o) => o.value === factorId)) return;
+  const f = getEF().getFactorById(factorId);
+  const label = f?.label ?? labelFallback ?? factorId;
+  const opt = document.createElement("option");
+  opt.value = factorId;
+  opt.textContent = label;
+  select.appendChild(opt);
+}
+
+function renderFactorSearchResults(results, container) {
+  if (!container) return;
+  if (!results || results.length === 0) {
+    container.innerHTML =
+      '<p class="factor-search-empty">No matching factors found.</p>';
+    return;
+  }
+  container.innerHTML = results
+    .map((r) => {
+      const label = r.label ?? "";
+      const value = r.value_kg_co2e_per_unit ?? r.valueKgCo2ePerUnit ?? "";
+      const unit = r.activity_unit ?? r.activityUnit ?? "";
+      const source = r.source ?? "";
+      const year = r.year ?? "";
+      return `
+      <div class="factor-search-result">
+        <div class="factor-search-result-main">
+          <div class="factor-search-result-label">${escapeHtml(String(label))}</div>
+          <div class="factor-search-result-meta">
+            ${escapeHtml(String(value))} kg CO2e per ${escapeHtml(String(unit))}
+          </div>
+          <div class="factor-search-result-source">
+            ${escapeHtml(String(source))}${year ? ` (${escapeHtml(String(year))})` : ""}
+          </div>
+        </div>
+        <button type="button" class="btn btn-primary btn-compact btn-use-found-factor" data-factor-id="${escapeHtml(
+          String(r.id || "")
+        )}" data-factor-label="${escapeHtml(String(label))}">
+          Use this factor
+        </button>
+      </div>
+    `;
+    })
+    .join("");
+}
+
+function closeFactorSearchModal() {
+  if (!factorSearchModalState.root) return;
+  factorSearchModalState.root.classList.add("hidden");
+  factorSearchModalState.currentEntryBlock = null;
+  factorSearchModalState.entryScopeKey = null;
+}
+
+function ensureFactorSearchModal() {
+  if (factorSearchModalState.root) return factorSearchModalState.root;
+  const wrap = document.createElement("div");
+  wrap.id = "factor-search-modal";
+  wrap.className = "factor-search-modal hidden";
+  wrap.innerHTML = `
+    <div class="factor-search-backdrop" data-action="close"></div>
+    <div class="factor-search-panel" role="dialog" aria-modal="true" aria-label="Find a factor">
+      <div class="factor-search-header">
+        <h3>Find a factor</h3>
+        <button type="button" class="btn btn-secondary btn-compact" data-action="close">Close</button>
+      </div>
+      <div class="field">
+        <label for="factor-search-input">Describe what you're looking for...</label>
+        <input
+          id="factor-search-input"
+          type="text"
+          class="factor-search-input"
+          placeholder="Describe what you're looking for..."
+        />
+      </div>
+      <div class="factor-search-actions">
+        <button type="button" class="btn btn-primary btn-compact" id="factor-search-submit">Search</button>
+      </div>
+      <div id="factor-search-results" class="factor-search-results"></div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+
+  wrap.addEventListener("click", (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.getAttribute("data-action") === "close") {
+      closeFactorSearchModal();
+      return;
+    }
+    const useBtn = target.closest(".btn-use-found-factor");
+    if (useBtn) {
+      const factorId = useBtn.getAttribute("data-factor-id") || "";
+      const labelFallback = useBtn.getAttribute("data-factor-label") || "";
+      const entry = resolveFactorSearchEntryBlock();
+      if (!entry || !factorId) return;
+      const select = entry.querySelector(".factor-library-select");
+      const mode = entry.querySelector(".factor-mode");
+      if (!(select instanceof HTMLSelectElement)) return;
+      if (mode instanceof HTMLSelectElement) mode.value = "default";
+      ensureSelectHasFactorOption(select, factorId, labelFallback);
+      select.value = factorId;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      closeFactorSearchModal();
+    }
+  });
+
+  const searchInput = wrap.querySelector("#factor-search-input");
+  const searchBtn = wrap.querySelector("#factor-search-submit");
+  const resultsEl = wrap.querySelector("#factor-search-results");
+
+  async function runSearch() {
+    if (!(searchInput instanceof HTMLInputElement) || !resultsEl) return;
+    const query = searchInput.value.trim();
+    if (!query) {
+      resultsEl.innerHTML =
+        '<p class="factor-search-empty">Enter a query to search.</p>';
+      return;
+    }
+    resultsEl.innerHTML = '<p class="factor-search-empty">Searching...</p>';
+    try {
+      const rows = await searchEmissionFactors(query, 3);
+      renderFactorSearchResults(rows, resultsEl);
+    } catch (err) {
+      console.error("Factor search failed:", err);
+      resultsEl.innerHTML =
+        '<p class="factor-search-empty">Search failed. Check API key and RPC function.</p>';
+    }
+  }
+
+  searchBtn?.addEventListener("click", () => {
+    void runSearch();
+  });
+  searchInput?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      void runSearch();
+    }
+  });
+
+  factorSearchModalState.root = wrap;
+  return wrap;
+}
+
+function openFactorSearchModal(entryBlock) {
+  const root = ensureFactorSearchModal();
+  factorSearchModalState.currentEntryBlock = entryBlock;
+  factorSearchModalState.entryScopeKey = {
+    scope: entryBlock.getAttribute("data-scope") || "",
+    key: entryBlock.getAttribute("data-key") || "",
+  };
+  root.classList.remove("hidden");
+  const input = root.querySelector("#factor-search-input");
+  const resultsEl = root.querySelector("#factor-search-results");
+  if (resultsEl) {
+    resultsEl.innerHTML =
+      '<p class="factor-search-empty">Run a search to see top matching factors.</p>';
+  }
+  if (input instanceof HTMLInputElement) {
+    input.value = "";
+    input.focus();
+  }
 }
 
 function getJsPDFConstructor() {

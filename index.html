@@ -55,16 +55,23 @@
     </header>
 
     <div class="layout">
-      <aside class="sidebar" aria-label="Primary">
-        <div class="nav-label">Navigate</div>
-        <nav>
-          <button type="button" class="nav-btn" data-nav="dashboard" aria-current="page">
-            Dashboard
-          </button>
-          <button type="button" class="nav-btn" data-nav="factors">Factor library</button>
-          <button type="button" class="nav-btn" data-nav="scope1">Scope 1</button>
-          <button type="button" class="nav-btn" data-nav="scope2">Scope 2</button>
-          <button type="button" class="nav-btn" data-nav="scope3">Scope 3</button>
+      <aside class="sidebar" aria-label="Main navigation">
+        <nav class="sidebar-nav" aria-label="Sections">
+          <div class="nav-section">
+            <div class="nav-section-label">Carbon accounting</div>
+            <button type="button" class="nav-btn" data-nav="dashboard" aria-current="page">
+              Dashboard
+            </button>
+            <button type="button" class="nav-btn" data-nav="factors">Factor library</button>
+            <button type="button" class="nav-btn" data-nav="scope1">Scope 1</button>
+            <button type="button" class="nav-btn" data-nav="scope2">Scope 2</button>
+            <button type="button" class="nav-btn" data-nav="scope3">Scope 3</button>
+          </div>
+          <div class="nav-section">
+            <div class="nav-section-label">CSRD reporting</div>
+            <button type="button" class="nav-btn" data-nav="csrd-assistant">CSRD Assistant</button>
+            <button type="button" class="nav-btn" data-nav="gap-assessment">Gap Assessment</button>
+          </div>
         </nav>
       </aside>
 
@@ -197,6 +204,16 @@
             illustrative default factor; replace with supplier-specific or hybrid factors as needed.
           </p>
           <div class="scope3-grid" id="scope3-fields"></div>
+        </section>
+
+        <section id="section-csrd-assistant" class="panel hidden" data-section>
+          <h2>CSRD Assistant</h2>
+          <p class="panel-desc">Coming soon</p>
+        </section>
+
+        <section id="section-gap-assessment" class="panel hidden" data-section>
+          <h2>Gap Assessment</h2>
+          <p class="panel-desc">Coming soon</p>
         </section>
       </main>
     </div>

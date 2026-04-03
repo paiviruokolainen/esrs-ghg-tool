@@ -46,16 +46,34 @@ const ESRS2_BASE_DRS = [
 
 const E1_DR_CATALOG = {
   "E1-1": { title: "Transition plan for climate change mitigation", mandatory: true },
-  "E1-2": { title: "Climate change adaptation", mandatory: true },
-  "E1-3": { title: "Climate-related hazards and adaptation solutions", mandatory: true },
-  "E1-4": { title: "Greenhouse gas emissions (Scopes 1, 2, 3)", mandatory: true },
-  "E1-5": { title: "GHG removals and mitigation projects", mandatory: true },
-  "E1-6": { title: "Energy consumption and mix", mandatory: true },
-  "E1-7": { title: "Internal carbon pricing", mandatory: true },
-  "E1-8": { title: "Financial effects from climate-related risks and opportunities", mandatory: true },
-  "E1-9": { title: "Anticipated financial effects from climate-related risks and opportunities", mandatory: true },
-  "E1-10": { title: "Additional climate-related disclosures (where applicable)", mandatory: true },
-  "E1-11": { title: "Location of significant climate-related physical risk", mandatory: true },
+  "E1-2": {
+    title: "Identification of climate-related risks and scenario analysis",
+    mandatory: true,
+  },
+  "E1-3": { title: "Resilience in relation to climate change", mandatory: true },
+  "E1-4": {
+    title: "Policies related to climate change mitigation and adaptation",
+    mandatory: true,
+  },
+  "E1-5": {
+    title:
+      "Actions and resources in relation to climate change mitigation and adaptation",
+    mandatory: true,
+  },
+  "E1-6": { title: "Targets related to climate change", mandatory: true },
+  "E1-7": { title: "Energy consumption and mix", mandatory: true },
+  "E1-8": { title: "Gross Scope 1, 2, 3 GHG emissions", mandatory: true },
+  "E1-9": {
+    title:
+      "GHG removals and GHG mitigation projects financed through carbon credits",
+    mandatory: true,
+  },
+  "E1-10": { title: "Internal carbon pricing", mandatory: true },
+  "E1-11": {
+    title:
+      "Anticipated financial effects from material physical and transition risks and potential climate-related opportunities",
+    mandatory: true,
+  },
 };
 
 function escapeHtml(s) {

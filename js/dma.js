@@ -4,6 +4,21 @@
  */
 
 import OpenAI from "openai";
+import {
+  AlignmentType,
+  Document,
+  Footer,
+  HeadingLevel,
+  PageBreak,
+  PageNumber,
+  Packer,
+  Paragraph,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+  WidthType,
+} from "docx";
 
 /**
  * @typedef {{
@@ -500,6 +515,516 @@ async function draftReasoningWithAi(companyProfile, topicLabel, materialityLabel
   const text = res.choices?.[0]?.message?.content?.trim();
   if (!text) throw new Error("No text returned from model.");
   return text;
+}
+
+function loadNotMaterialCombinedForReport(e1) {
+  if (!e1) return "";
+  const a = (e1.notMaterialExplanation || "").trim();
+  const b = (e1.forwardLookingAnalysis || "").trim();
+  if (a && b && a === b) return a;
+  if (a && b) return `${a}\n\n${b}`;
+  return a || b;
+}
+
+function formatCompanySizeLabel(size) {
+  if (size === "large") return "Large";
+  if (size === "small") return "Small";
+  if (size === "medium") return "Medium";
+  return size ? String(size) : "—";
+}
+
+function formatE1SubtopicsScreeningCell(e1) {
+  const sub = e1.subtopics || {};
+  const expanded = !!e1.subExpanded;
+  const subKeyList = E1_SUB_KEYS.map((x) => x.key);
+  const hasGranular =
+    expanded &&
+    subKeyList.some(
+      (k) =>
+        sub[k] === "material" ||
+        sub[k] === "not_material" ||
+        sub[k] === E1_REQUIRES_FURTHER_ASSESSMENT
+    );
+  if (!hasGranular) return "Topic level";
+  return E1_SUB_KEYS.map((st) => {
+    const v = sub[st.key];
+    let dec = "—";
+    if (v === "material") dec = "Material";
+    else if (v === "not_material") dec = "Not material";
+    else if (v === E1_REQUIRES_FURTHER_ASSESSMENT) dec = "Requires further assessment";
+    else if (v == null) dec = "Inherits parent topic";
+    return `${st.label}: ${dec}`;
+  }).join("; ");
+}
+
+function dmaWordSanitizeFilename(name) {
+  return String(name || "report")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .trim()
+    .slice(0, 80);
+}
+
+/** @param {string} text */
+function dmaWordParagraphsFromPlainText(text) {
+  const raw = text ?? "";
+  if (!raw) return [new Paragraph({ children: [new TextRun("—")] })];
+  const lines = raw.split("\n");
+  return lines.map(line => new Paragraph({ children: [new TextRun(line)] }));
+}
+
+/** @param {string[]} cells */
+function dmaWordTableRow(cells, header) {
+  return new TableRow({
+    children: cells.map(
+      (c) =>
+        new TableCell({
+          children: [
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: String(c ?? "—"),
+                  bold: !!header,
+                }),
+              ],
+            }),
+          ],
+        })
+    ),
+  });
+}
+
+/**
+ * @param {Record<string, any>} topicAssessments
+ * @returns {{ topic: string, subtopic: string, materiality: string }[]}
+ */
+function buildTopicScreeningRowsForWord(topicAssessments) {
+  const rows = [];
+  const e1 = topicAssessments?.E1 || {};
+  const e1LevelLabel = topicE1MaterialityLabel(e1.level);
+
+  for (const t of ESRS_TOPICS) {
+    if (t.interactive) {
+      const sub = e1.subtopics || {};
+      const expanded = !!e1.subExpanded;
+      const subKeyList = E1_SUB_KEYS.map((x) => x.key);
+      const hasGranular =
+        expanded &&
+        subKeyList.some(
+          (k) =>
+            sub[k] === "material" ||
+            sub[k] === "not_material" ||
+            sub[k] === E1_REQUIRES_FURTHER_ASSESSMENT
+        );
+
+      if (hasGranular) {
+        for (const st of E1_SUB_KEYS) {
+          let dec = effectiveSubtopicDisplayLabel(sub, e1, st.key);
+          if (!dec) {
+            const v = effectiveSubtopicValue(sub, e1, st.key);
+            dec = v == null ? "Inherits parent topic" : "—";
+          }
+          rows.push({
+            topic: `${t.code} — ${t.name}`,
+            subtopic: st.label,
+            materiality: dec,
+          });
+        }
+      } else {
+        rows.push({
+          topic: `${t.code} — ${t.name}`,
+          subtopic: "—",
+          materiality: e1LevelLabel || "—",
+        });
+      }
+    } else {
+      rows.push({
+        topic: `${t.code} — ${t.name}`,
+        subtopic: "—",
+        materiality: "Not assessed in this version",
+      });
+    }
+  }
+  return rows;
+}
+
+/**
+ * @param {{
+ *   companyProfile: Record<string, any>,
+ *   topicAssessments: Record<string, any>,
+ *   drRows: DrRow[],
+ *   entityEntries: any[],
+ *   reportingYear: number,
+ *   generatedAt: Date,
+ * }} opts
+ */
+function buildDmaWordDocument({
+  companyProfile,
+  topicAssessments,
+  drRows,
+  entityEntries,
+  reportingYear,
+  generatedAt,
+}) {
+  const genStr =
+    generatedAt instanceof Date
+      ? generatedAt.toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        })
+      : String(generatedAt);
+
+  const e1 = topicAssessments?.E1 || {};
+  const e1LevelLabel = topicE1MaterialityLabel(e1.level);
+
+  const dmaReportFooter = new Footer({
+    children: [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          new TextRun({
+            children: [
+              "Draft — amended ESRS 2.0 (draft). Not for submission without professional review. Page ",
+              PageNumber.CURRENT,
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
+
+  const coverChildren = [
+    new Paragraph({
+      heading: HeadingLevel.TITLE,
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun("Double Materiality Assessment Report")],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun(companyProfile.companyName || "—")],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun(`Reporting period: ${reportingYear}`)],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun(`Date generated: ${genStr}`)],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun("Prepared using ESG Reporting Suite")],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun(
+          "Based on amended ESRS 2.0 — top-down approach per amended ESRS 1 AR 17"
+        ),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun(
+          "Draft report — based on amended ESRS 2.0 draft standards. Not for submission without professional review."
+        ),
+      ],
+    }),
+    new Paragraph({ children: [new PageBreak()] }),
+  ];
+
+  const companyProfileChildren = [
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun("Company Profile")],
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Company name: ", bold: true }),
+        new TextRun(companyProfile.companyName || "—"),
+      ],
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Country: ", bold: true }),
+        new TextRun(companyProfile.country || "—"),
+      ],
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Sector: ", bold: true }),
+        new TextRun(companyProfile.sector || "—"),
+      ],
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Size: ", bold: true }),
+        new TextRun(formatCompanySizeLabel(companyProfile.companySize)),
+      ],
+    }),
+    new Paragraph({
+      children: [new TextRun({ text: "Business model: ", bold: true })],
+    }),
+    ...dmaWordParagraphsFromPlainText(companyProfile.businessModel || ""),
+    new Paragraph({
+      children: [new TextRun({ text: "Value chain: ", bold: true })],
+    }),
+    ...dmaWordParagraphsFromPlainText(companyProfile.valueChain || ""),
+    new Paragraph({ children: [new PageBreak()] }),
+  ];
+
+  const screeningRows = buildTopicScreeningRowsForWord(topicAssessments);
+  const screeningTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      dmaWordTableRow(["Topic", "Sub-topic", "Materiality decision"], true),
+      ...screeningRows.map((r) =>
+        dmaWordTableRow([r.topic, r.subtopic, r.materiality], false)
+      ),
+    ],
+  });
+
+  const screeningChildren = [
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun("Topic Screening Results")],
+    }),
+    screeningTable,
+    new Paragraph({ children: [new PageBreak()] }),
+  ];
+
+  const reasoningChildren = [
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun("Materiality Reasoning")],
+    }),
+  ];
+
+  if (ESRS_TOPICS.some((t) => t.interactive)) {
+    const head = `E1 — Climate change — ${e1LevelLabel || "—"}`;
+    if (e1.level === "material" || e1.level === E1_REQUIRES_FURTHER_ASSESSMENT) {
+      reasoningChildren.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          children: [new TextRun(head)],
+        }),
+        new Paragraph({
+          children: [new TextRun({ text: "Reasoning", bold: true })],
+        }),
+        ...dmaWordParagraphsFromPlainText(e1.reasoning || "")
+      );
+    } else if (e1.level === "not_material") {
+      const combined = loadNotMaterialCombinedForReport(e1);
+      reasoningChildren.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          children: [new TextRun(head)],
+        }),
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: "Detailed explanation and forward-looking analysis",
+              bold: true,
+            }),
+          ],
+        }),
+        ...dmaWordParagraphsFromPlainText(combined)
+      );
+    } else {
+      reasoningChildren.push(new Paragraph({ children: [new TextRun("—")] }));
+    }
+  } else {
+    reasoningChildren.push(new Paragraph({ children: [new TextRun("—")] }));
+  }
+
+  reasoningChildren.push(new Paragraph({ children: [new PageBreak()] }));
+
+  const omittedCount = drRows.filter((r) => r.omitted).length;
+  const totalCount = drRows.length;
+
+  const drTableRows = [
+    dmaWordTableRow(
+      [
+        "DR Reference",
+        "Title",
+        "Standard",
+        "Sub-topic",
+        "Materiality decision",
+        "Omitted",
+        "Omission reason",
+      ],
+      true
+    ),
+    ...drRows.map((r) => {
+      const cols = drRowTableColumns(r.ref, r.standard, topicAssessments);
+      const omitted = !!r.omitted;
+      const omitReasonText = omitted
+        ? [r.omissionReason, r.omissionJustification].filter(Boolean).join(" — ") ||
+          "—"
+        : "—";
+      return dmaWordTableRow(
+        [
+          r.ref,
+          r.title,
+          r.standard,
+          cols.subtopic || "—",
+          cols.materiality || "—",
+          omitted ? "Yes" : "No",
+          omitReasonText,
+        ],
+        false
+      );
+    }),
+  ];
+
+  const drChildren = [
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun("Applicable Disclosure Requirements")],
+    }),
+    new Paragraph({
+      children: [
+        new TextRun(
+          "Based on amended ESRS 2.0. ESRS 2 general disclosures apply to all undertakings. Topical DRs apply based on materiality assessment above."
+        ),
+      ],
+    }),
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: drTableRows,
+    }),
+    new Paragraph({
+      children: [
+        new TextRun(
+          `Total DRs: ${totalCount}. Omitted DRs: ${omittedCount}.`
+        ),
+      ],
+    }),
+  ];
+
+  const bodyChildren = [
+    ...coverChildren,
+    ...companyProfileChildren,
+    ...screeningChildren,
+    ...reasoningChildren,
+    ...drChildren,
+  ];
+
+  if (entityEntries.length > 0) {
+    bodyChildren.push(new Paragraph({ children: [new PageBreak()] }));
+    bodyChildren.push(
+      new Paragraph({
+        heading: HeadingLevel.HEADING_1,
+        children: [new TextRun("Entity-specific Disclosures")],
+      })
+    );
+    entityEntries.forEach((e, i) => {
+      const comp = [];
+      if (e.frameworkEnabled) {
+        comp.push(
+          `Following a framework or reporting standard: ${e.frameworkStandard || "—"}`
+        );
+      }
+      if (e.bestPracticesEnabled) {
+        comp.push(
+          `Using available best practices: ${e.bestPracticesDescription || "—"}`
+        );
+      }
+      const compStr = comp.length ? comp.join("\n\n") : "—";
+      bodyChildren.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          children: [new TextRun(`Disclosure ${i + 1}`)],
+        }),
+        new Paragraph({
+          children: [new TextRun({ text: "Topic: ", bold: true })],
+        }),
+        ...dmaWordParagraphsFromPlainText(e.topic || ""),
+        new Paragraph({
+          children: [new TextRun({ text: "Description: ", bold: true })],
+        }),
+        ...dmaWordParagraphsFromPlainText(e.description || ""),
+        new Paragraph({
+          children: [
+            new TextRun({ text: "Comparability approach: ", bold: true }),
+          ],
+        }),
+        ...dmaWordParagraphsFromPlainText(compStr)
+      );
+    });
+  }
+
+  return new Document({
+    sections: [
+      {
+        footers: {
+          default: dmaReportFooter,
+        },
+        children: bodyChildren,
+      },
+    ],
+  });
+}
+
+/**
+ * Fetches the completed DMA assessment and downloads a Word (.docx) report in the browser.
+ * @param {import("@supabase/supabase-js").SupabaseClient} supabase
+ * @param {string} reportingPeriodId
+ * @param {number} reportingYear
+ * @returns {Promise<boolean>} true if the file was generated and downloaded
+ */
+export async function downloadDmaAssessmentWordReport(
+  supabase,
+  reportingPeriodId,
+  reportingYear
+) {
+  const { data: userData, error: uErr } = await supabase.auth.getUser();
+  if (uErr || !userData?.user) return false;
+
+  const { data, error } = await supabase
+    .from("dma_assessments")
+    .select("*")
+    .eq("reporting_period_id", reportingPeriodId)
+    .eq("user_id", userData.user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("dma report fetch:", error);
+    return false;
+  }
+  if (!data || data.status !== "completed") return false;
+
+  const companyProfile = normalizeCompanyProfile(data.company_profile);
+  const topicAssessments = normalizeTopicAssessments(data.topic_assessments);
+  const drRows = Array.isArray(data.dr_list) ? withRowIds(data.dr_list) : [];
+  const entityEntries = parseEntitySpecificDisclosures(
+    data.entity_specific_disclosures
+  ).filter((e) => !isEntitySpecificEntryEmpty(e));
+
+  console.log("[DMA report] assessment data used for report", data);
+
+  const doc = buildDmaWordDocument({
+    companyProfile,
+    topicAssessments,
+    drRows,
+    entityEntries,
+    reportingYear,
+    generatedAt: new Date(),
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `DMA-${reportingYear}-${dmaWordSanitizeFilename(companyProfile.companyName || "report")}.docx`;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+
+  return true;
 }
 
 /**
@@ -1123,6 +1648,7 @@ export function initDma(supabase) {
         ${renderEntitySpecificSection()}
         <div class="dma-actions">
           <button type="button" class="btn btn-secondary" id="dma-s4-back">Back</button>
+          ${status === "completed" ? `<button type="button" class="btn btn-secondary" id="dma-download-report">Download Word report</button>` : ""}
           <button type="button" class="btn btn-primary" id="dma-s4-save">Approve and save</button>
         </div>
       </div>
@@ -1458,6 +1984,27 @@ export function initDma(supabase) {
         drList = withRowIds(buildApplicableDrList(topicAssessments));
         await persistPartial({ dr_list: drList });
         render();
+      });
+      document.getElementById("dma-download-report")?.addEventListener("click", async () => {
+        const rpId = await resolveReportingPeriodId();
+        if (!rpId) {
+          showDmaInlineMessage("Select a reporting period first.", "info");
+          return;
+        }
+        const yearStr =
+          document.getElementById("reporting-period-select")?.value || "";
+        const y = parseInt(yearStr, 10);
+        const ok = await downloadDmaAssessmentWordReport(
+          supabase,
+          rpId,
+          Number.isFinite(y) ? y : new Date().getFullYear()
+        );
+        if (!ok) {
+          showDmaInlineMessage(
+            "Could not download report. Ensure the assessment is saved as completed.",
+            "error"
+          );
+        }
       });
       root.querySelectorAll(".dma-omit-dr").forEach((btn) => {
         btn.addEventListener("click", () => {

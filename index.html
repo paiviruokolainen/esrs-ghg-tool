@@ -48,9 +48,6 @@
       <div class="header-actions">
         <span id="user-email" class="user-email" aria-live="polite"></span>
         <button type="button" class="btn btn-secondary" id="btn-sign-out">Sign out</button>
-        <button type="button" class="btn btn-secondary" id="btn-download-pdf">
-          Download PDF report
-        </button>
       </div>
     </header>
 
@@ -100,7 +97,12 @@
         </div>
 
         <section id="section-dashboard" class="panel" data-section>
-          <h2>Dashboard</h2>
+          <div class="scope-panel-header">
+            <h2>Dashboard</h2>
+            <button type="button" class="btn btn-secondary" id="btn-download-pdf">
+              Download GHG Report
+            </button>
+          </div>
           <p class="panel-desc">
             Totals are the sum of calculated tCO2e from each line (activity × emission factor ÷ 1000).
             Legacy-only values from an older version of the tool are included until you enter activity and a

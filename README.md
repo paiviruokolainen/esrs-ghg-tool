@@ -20,15 +20,30 @@ with no coding background — and what the real limitations are.
 
 ## What it does
 
-- Records GHG emissions data across Scope 1, 2 and all 15 
-  Scope 3 categories
-- Follows GHG Protocol and ESRS E1 structure
-- All values in tCO2e
-- Supports multiple reporting periods (years)
-- Emission factors: select from built-in library or enter 
-  custom factors with source notes
-- Dashboard with totals by scope
-- PDF export of emissions report
+- GHG management
+  - Records GHG emissions data across Scope 1, 2 and all 15 
+    Scope 3 categories
+  - Follows GHG Protocol and ESRS E1 structure
+  - All values in tCO2e
+  - Supports multiple reporting periods (years)
+  - Emission factors: select from built-in library or enter 
+    custom factors with source notes
+  - Dashboard with totals by scope
+  - PDF export of emissions report
+  - Emission factor values are illustrative — 
+  jurisdiction-specific factors needed for real reporting
+  - Natural language emission factor search powered 
+  by RAG (OpenAI embeddings + pgvector)
+
+- CSRD reporting
+ - Double Materiality Assessment (DMA) tool
+  - Top-down approach per amended ESRS 1 AR 17
+  - Covers ESRS 2 general disclosures and ESRS E1
+  - AI-assisted materiality reasoning
+  - Automatic DR list generation with omission tracking
+  - Entity-specific disclosure documentation
+  - Export to .docx for professional review
+  - Based on amended ESRS 2.0 (draft standards)
 
 ---
 
@@ -38,6 +53,7 @@ with no coding background — and what the real limitations are.
 - ESRS E1 (European Sustainability Reporting Standards)
 - Emission factors sourced from IPCC 2006 Guidelines, 
   IPCC AR6, and GHG Protocol Technical Guidance
+- ESRS 2.0
 
 ---
 
@@ -50,10 +66,10 @@ with no coding background — and what the real limitations are.
 - User authentication working (email/password)
 - Emissions data saved per user and reporting period
 - Reporting periods managed in database
-- Emission factor values are illustrative — 
-  jurisdiction-specific factors needed for real reporting
-- Natural language emission factor search powered 
-  by RAG (OpenAI embeddings + pgvector)
+- DMA tool complete for ESRS 2 and E1
+- More ESRS standards coming in future releases
+- Based on amended ESRS 2.0 draft — 
+  not yet legally binding
 
 ---
 

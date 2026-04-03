@@ -814,6 +814,271 @@ body {
   color: var(--text-muted);
 }
 
+/* DMA — Double Materiality Assessment */
+.dma-shell {
+  max-width: 720px;
+}
+
+.dma-ar-note {
+  margin-bottom: 1rem;
+}
+
+.dma-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  margin-bottom: 1.25rem;
+  padding: 0.65rem 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.dma-progress-sep {
+  color: #cbd5e1;
+  font-size: 0.65rem;
+}
+
+.dma-progress-step.is-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.dma-progress-step.is-done {
+  color: var(--text-muted);
+}
+
+.dma-panel--notice {
+  padding: 1rem 1.1rem;
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+}
+
+.dma-step-title {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.dma-step-intro {
+  margin: 0 0 1rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.dma-form .field {
+  margin-bottom: 0.75rem;
+}
+
+.dma-input,
+.dma-textarea {
+  max-width: 100%;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.dma-input--sm {
+  max-width: 6rem;
+}
+
+.dma-input--flex {
+  flex: 1 1 160px;
+  min-width: 120px;
+}
+
+.dma-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--border);
+}
+
+.dma-warning {
+  margin: 0.65rem 0;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: #92400e;
+  background: rgba(180, 83, 9, 0.08);
+  border: 1px solid rgba(180, 83, 9, 0.2);
+  border-radius: 6px;
+}
+
+.dma-topic-grid {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.dma-topic {
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.dma-topic--active {
+  background: var(--bg);
+}
+
+.dma-topic--locked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  opacity: 0.55;
+  background: var(--bg);
+}
+
+.dma-badge-soon {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+}
+
+.dma-footnote-soon {
+  margin: 0.75rem 0 0;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.dma-topic-head {
+  margin-bottom: 0.5rem;
+}
+
+.dma-mat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+}
+
+.dma-mat-row--compact {
+  gap: 0.35rem 0.75rem;
+}
+
+.dma-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.dma-radio.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dma-details {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.dma-details summary {
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.dma-details-hint {
+  margin: 0.5rem 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.dma-subtopic {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.dma-subtopic:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.dma-subtopic-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  margin-bottom: 0.35rem;
+  color: var(--text-muted);
+}
+
+.dma-hint {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.dma-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 0.75rem 0;
+}
+
+.dma-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.dma-table th,
+.dma-table td {
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.dma-table th {
+  background: var(--bg);
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.dma-table tr:last-child td {
+  border-bottom: none;
+}
+
+.dma-table code {
+  font-size: 0.78rem;
+  background: var(--bg);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+}
+
+.dma-add-dr {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.75rem 0;
+}
+
 @media (max-width: 768px) {
   .layout {
     flex-direction: column;

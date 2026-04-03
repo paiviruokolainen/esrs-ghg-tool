@@ -317,7 +317,9 @@ export function initDma(supabase) {
 
   async function persistPartial(patch) {
     if (!reportingPeriodId) {
-      showDmaToast("Select a reporting period first.");
+      queueMicrotask(() =>
+        showDmaInlineMessage("Select a reporting period first.", "info")
+      );
       return false;
     }
     const { data: userData, error: uErr } = await supabase.auth.getUser();
@@ -354,7 +356,7 @@ export function initDma(supabase) {
         .eq("user_id", userData.user.id);
       if (error) {
         console.error("dma update:", error);
-        showDmaToast("Could not save.");
+        queueMicrotask(() => showDmaInlineMessage("Could not save.", "error"));
         return false;
       }
     } else {
@@ -373,7 +375,7 @@ export function initDma(supabase) {
         .single();
       if (error) {
         console.error("dma insert:", error);
-        showDmaToast("Could not save.");
+        queueMicrotask(() => showDmaInlineMessage("Could not save.", "error"));
         return false;
       }
       assessmentId = ins?.id ?? null;
@@ -381,16 +383,35 @@ export function initDma(supabase) {
     return true;
   }
 
-  function showDmaToast(msg) {
-    const t = document.getElementById("toast");
-    if (t) {
-      t.textContent = msg;
-      t.classList.add("visible");
-      clearTimeout(showDmaToast._t);
-      showDmaToast._t = setTimeout(() => t.classList.remove("visible"), 2600);
-    } else {
-      alert(msg);
-    }
+  function showDmaInlineMessage(msg, variant) {
+    const el = document.getElementById("dma-flow-message");
+    if (!el) return;
+    clearTimeout(showDmaInlineMessage._t);
+    el.textContent = msg;
+    el.classList.remove("hidden");
+    const colors = {
+      success: "#0d9488",
+      error: "#b91c1c",
+      info: "#64748b",
+    };
+    el.style.color = colors[variant] || colors.info;
+    showDmaInlineMessage._t = setTimeout(() => {
+      el.classList.add("hidden");
+      el.textContent = "";
+    }, 3000);
+  }
+
+  function showAiDraftSuccess(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const key = `_draftOk_${elementId}`;
+    clearTimeout(showAiDraftSuccess[key]);
+    el.textContent = "Draft inserted — review and edit before saving.";
+    el.classList.remove("hidden");
+    showAiDraftSuccess[key] = setTimeout(() => {
+      el.classList.add("hidden");
+      el.textContent = "";
+    }, 3000);
   }
 
   function stepFromProfile() {
@@ -417,9 +438,17 @@ export function initDma(supabase) {
             const done = l.n < cur;
             return `<span class="dma-progress-step ${active ? "is-active" : ""} ${done ? "is-done" : ""}">${escapeHtml(l.t)}</span>`;
           })
-          .join('<span class="dma-progress-sep" aria-hidden="true">→</span>')}
+          .join('<span class="dma-progress-sep" aria-hidden="true"><span class="dma-progress-arrow">→</span></span>')}
       </nav>
     `;
+  }
+
+  function loadNotMaterialCombined(e1) {
+    const a = (e1.notMaterialExplanation || "").trim();
+    const b = (e1.forwardLookingAnalysis || "").trim();
+    if (a && b && a === b) return a;
+    if (a && b) return `${a}\n\n${b}`;
+    return a || b;
   }
 
   function renderStep1() {
@@ -483,24 +512,31 @@ export function initDma(supabase) {
       .join("");
   }
 
+  function materialityRow(name, value, disabled, compact) {
+    const rowClass = compact ? "dma-mat-row dma-mat-row--compact" : "dma-mat-row";
+    return `
+      <div class="dma-mat-row-wrap" style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem 0.75rem">
+        <div class="${rowClass}">
+          ${materialityRadios(name, value, disabled)}
+        </div>
+        <button type="button" class="btn btn-secondary btn-compact dma-mat-clear" data-mat-name="${escapeHtml(name)}" ${disabled ? "disabled" : ""}>Clear</button>
+      </div>
+    `;
+  }
+
   function renderStep2() {
     const e1 = topicAssessments.E1 || {};
-    const warn =
-      e1.level === "not_material"
-        ? `<div class="dma-warning" role="status">
-            Note: If climate change is not material, amended ESRS 1 requires a detailed explanation of your conclusions and a forward-looking analysis. You will be asked to document this in the next step.
-          </div>`
-        : "";
+    const warnHidden = e1.level !== "not_material";
 
     const e1Block = `
       <div class="dma-topic dma-topic--active">
         <div class="dma-topic-head">
           <strong>E1 — ${escapeHtml(ESRS_TOPICS.find((x) => x.code === "E1")?.name || "Climate change")}</strong>
         </div>
-        <div class="dma-mat-row">
-          ${materialityRadios("e1-level", e1.level, false)}
+        ${materialityRow("e1-level", e1.level, false, false)}
+        <div id="dma-e1-notmat-warning" class="dma-warning ${warnHidden ? "hidden" : ""}" role="status">
+          Note: If climate change is not material, amended ESRS 1 requires a detailed explanation of your conclusions and a forward-looking analysis. You will be asked to document this in the next step.
         </div>
-        ${warn}
         <details class="dma-details" ${e1.subExpanded ? "open" : ""}>
           <summary>Optional: sub-topics (E1)</summary>
           <p class="dma-details-hint">Climate change mitigation, adaptation, and energy — refine which E1 disclosures may apply.</p>
@@ -509,9 +545,7 @@ export function initDma(supabase) {
             return `
             <div class="dma-subtopic">
               <div class="dma-subtopic-label">${escapeHtml(st.label)}</div>
-              <div class="dma-mat-row dma-mat-row--compact">
-                ${materialityRadios(`e1-sub-${st.key}`, v, false)}
-              </div>
+              ${materialityRow(`e1-sub-${st.key}`, v, false, true)}
             </div>`;
           }).join("")}
         </details>
@@ -553,22 +587,22 @@ export function initDma(supabase) {
       body = `
         <div class="field">
           <label>Climate change (E1) — materiality: ${escapeHtml(lvl === "material" ? "Material" : "Unsure")}</label>
-          <textarea id="dma-e1-reason" class="dma-textarea" rows="5" placeholder="Document your reasoning for this conclusion.">${escapeHtml(e1.reasoning || "")}</textarea>
+          <p class="field-hint">Include any sub-topic judgments (mitigation, adaptation, energy) in this single topic-level narrative.</p>
+          <textarea id="dma-e1-reason" class="dma-textarea dma-textarea--reasoning" placeholder="Document your reasoning for this conclusion (E1 as a whole, including sub-topics where relevant).">${escapeHtml(e1.reasoning || "")}</textarea>
         </div>
         <button type="button" class="btn btn-secondary btn-compact" id="dma-ai-e1">Draft reasoning with AI</button>
+        <p id="dma-ai-e1-error" class="hidden" role="alert" style="margin:0.35rem 0 0;font-size:0.8125rem;color:#b91c1c;max-width:36rem;line-height:1.4;"></p>
       `;
     } else if (lvl === "not_material") {
       body = `
         <div class="field">
-          <label>Detailed explanation (not material)</label>
-          <p class="field-hint">Amended ESRS 1 requires a detailed explanation when climate change is assessed as not material.</p>
-          <textarea id="dma-e1-notmat" class="dma-textarea" rows="5">${escapeHtml(e1.notMaterialExplanation || "")}</textarea>
-        </div>
-        <div class="field">
-          <label>Forward-looking analysis</label>
-          <textarea id="dma-e1-fwd" class="dma-textarea" rows="4" placeholder="Describe how conclusions may change and forward-looking considerations.">${escapeHtml(e1.forwardLookingAnalysis || "")}</textarea>
+          <label>Climate change (E1) — materiality: Not material</label>
+          <p class="field-hint">Amended ESRS 1 requires a detailed explanation and forward-looking analysis. Capture both in the narrative below (E1 as a whole, including sub-topics where relevant).</p>
+          <textarea id="dma-e1-notmat-combined" class="dma-textarea dma-textarea--reasoning">${escapeHtml(loadNotMaterialCombined(e1))}</textarea>
         </div>
         <button type="button" class="btn btn-secondary btn-compact" id="dma-ai-e1-nm">Draft reasoning with AI</button>
+        <p id="dma-ai-e1-nm-error" class="hidden" role="alert" style="margin:0.35rem 0 0;font-size:0.8125rem;color:#b91c1c;max-width:36rem;line-height:1.4;"></p>
+        <p id="dma-ai-e1-nm-success" class="hidden" role="status" style="margin:0.35rem 0 0;font-size:0.8125rem;color:#0d9488;max-width:36rem;line-height:1.4;"></p>
       `;
     } else {
       body = `<p class="dma-hint">Complete topic screening for E1 in step 2.</p>`;
@@ -645,6 +679,7 @@ export function initDma(supabase) {
     if (!reportingPeriodId) {
       root.innerHTML = `
         ${renderProgress()}
+        <p id="dma-flow-message" class="hidden" role="status" style="margin:0 0 1rem;font-size:0.8125rem;max-width:36rem;line-height:1.4;"></p>
         <div class="dma-panel dma-panel--notice">
           <p>Select a <strong>reporting period</strong> above to start or resume your DMA. Data is stored per user and reporting period.</p>
         </div>
@@ -655,6 +690,7 @@ export function initDma(supabase) {
     const step = stepFromProfile();
     root.innerHTML = `
       <div class="dma-shell">
+        <p id="dma-flow-message" class="hidden" role="status" style="margin:0 0 1rem;font-size:0.8125rem;max-width:36rem;line-height:1.4;"></p>
         <p class="panel-desc dma-ar-note">Top-down DMA only (amended ESRS 1 AR 17). Tool scope: ESRS 2 general disclosures and ESRS E1 climate change (draft ESRS 2.0).</p>
         ${renderProgress()}
         ${step === 1 ? renderStep1() : ""}
@@ -690,11 +726,13 @@ export function initDma(supabase) {
   function readStep3FromDom() {
     const e1 = topicAssessments.E1;
     const r = document.getElementById("dma-e1-reason");
-    const nm = document.getElementById("dma-e1-notmat");
-    const fw = document.getElementById("dma-e1-fwd");
+    const combo = document.getElementById("dma-e1-notmat-combined");
     if (r) e1.reasoning = r.value;
-    if (nm) e1.notMaterialExplanation = nm.value;
-    if (fw) e1.forwardLookingAnalysis = fw.value;
+    if (combo) {
+      const v = combo.value;
+      e1.notMaterialExplanation = v;
+      e1.forwardLookingAnalysis = v;
+    }
   }
 
   function bindStepHandlers(step) {
@@ -716,13 +754,55 @@ export function initDma(supabase) {
       document.getElementById("dma-s2-next")?.addEventListener("click", async () => {
         readStep2FromDom();
         if (!topicAssessments.E1?.level) {
-          showDmaToast("Select materiality for E1 — climate change.");
+          showDmaInlineMessage(
+            "Select materiality for E1 — climate change.",
+            "error"
+          );
           return;
         }
         setStep(3);
         await persistPartial({ topic_assessments: topicAssessments, company_profile: companyProfile });
         render();
       });
+
+      function updateE1NotMaterialWarning() {
+        const w = document.getElementById("dma-e1-notmat-warning");
+        if (!w) return;
+        const el = document.querySelector('input[name="e1-level"]:checked');
+        const show = el?.value === "not_material";
+        w.classList.toggle("hidden", !show);
+      }
+
+      document.querySelectorAll('input[name="e1-level"]').forEach((inp) => {
+        inp.addEventListener("change", () => {
+          const c = document.querySelector('input[name="e1-level"]:checked');
+          topicAssessments.E1.level = c ? c.value : null;
+          updateE1NotMaterialWarning();
+        });
+      });
+      updateE1NotMaterialWarning();
+
+      root.querySelectorAll(".dma-mat-clear").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const name = btn.getAttribute("data-mat-name");
+          if (!name) return;
+          document
+            .querySelectorAll(`input[name="${name}"]`)
+            .forEach((el) => {
+              if (el instanceof HTMLInputElement) el.checked = false;
+            });
+          if (name === "e1-level") {
+            topicAssessments.E1.level = null;
+            updateE1NotMaterialWarning();
+          } else if (name.startsWith("e1-sub-")) {
+            const key = name.slice("e1-sub-".length);
+            if (topicAssessments.E1.subtopics) {
+              topicAssessments.E1.subtopics[key] = null;
+            }
+          }
+        });
+      });
+
       document.querySelector(".dma-details")?.addEventListener("toggle", () => {
         const d = document.querySelector(".dma-details");
         if (topicAssessments.E1) topicAssessments.E1.subExpanded = !!d?.open;
@@ -746,10 +826,23 @@ export function initDma(supabase) {
         });
         render();
       });
-      document.getElementById("dma-ai-e1")?.addEventListener("click", async () => {
+      const aiBtnLabel = "Draft reasoning with AI";
+      const dmaAiE1 = document.getElementById("dma-ai-e1");
+      dmaAiE1?.addEventListener("click", async () => {
         readStep3FromDom();
+        const errEl = document.getElementById("dma-ai-e1-error");
+        const okEl = document.getElementById("dma-ai-e1-success");
+        if (errEl) {
+          errEl.textContent = "";
+          errEl.classList.add("hidden");
+        }
+        if (okEl) {
+          okEl.textContent = "";
+          okEl.classList.add("hidden");
+        }
+        dmaAiE1.disabled = true;
+        dmaAiE1.textContent = "Drafting...";
         try {
-          showDmaToast("Drafting…");
           const text = await draftReasoningWithAi(
             companyProfile,
             "E1 Climate change",
@@ -758,28 +851,70 @@ export function initDma(supabase) {
           );
           const ta = document.getElementById("dma-e1-reason");
           if (ta) ta.value = text;
-          showDmaToast("Draft inserted — review before use.");
+          if (errEl) {
+            errEl.textContent = "";
+            errEl.classList.add("hidden");
+          }
+          showAiDraftSuccess("dma-ai-e1-success");
         } catch (e) {
           console.error(e);
-          showDmaToast("AI draft failed. Check API key.");
+          if (errEl) {
+            errEl.textContent =
+              "Could not generate draft. Check your API key and try again.";
+            errEl.classList.remove("hidden");
+          }
+          if (okEl) {
+            okEl.textContent = "";
+            okEl.classList.add("hidden");
+          }
+        } finally {
+          dmaAiE1.disabled = false;
+          dmaAiE1.textContent = aiBtnLabel;
         }
       });
-      document.getElementById("dma-ai-e1-nm")?.addEventListener("click", async () => {
+      const dmaAiE1Nm = document.getElementById("dma-ai-e1-nm");
+      dmaAiE1Nm?.addEventListener("click", async () => {
         readStep3FromDom();
+        const errEl = document.getElementById("dma-ai-e1-nm-error");
+        const okEl = document.getElementById("dma-ai-e1-nm-success");
+        if (errEl) {
+          errEl.textContent = "";
+          errEl.classList.add("hidden");
+        }
+        if (okEl) {
+          okEl.textContent = "";
+          okEl.classList.add("hidden");
+        }
+        dmaAiE1Nm.disabled = true;
+        dmaAiE1Nm.textContent = "Drafting...";
         try {
-          showDmaToast("Drafting…");
           const text = await draftReasoningWithAi(
             companyProfile,
             "E1 Climate change — not material",
             "Not material — detailed explanation and forward-looking analysis required",
             [topicAssessments.E1?.notMaterialExplanation, topicAssessments.E1?.forwardLookingAnalysis].join("\n")
           );
-          const ta = document.getElementById("dma-e1-notmat");
+          const ta = document.getElementById("dma-e1-notmat-combined");
           if (ta) ta.value = text;
-          showDmaToast("Draft inserted — review before use.");
+          if (errEl) {
+            errEl.textContent = "";
+            errEl.classList.add("hidden");
+          }
+          showAiDraftSuccess("dma-ai-e1-nm-success");
         } catch (e) {
           console.error(e);
-          showDmaToast("AI draft failed. Check API key.");
+          if (errEl) {
+            errEl.textContent =
+              "Could not generate draft. Check your API key and try again.";
+            errEl.classList.remove("hidden");
+          }
+          if (okEl) {
+            okEl.textContent = "";
+            okEl.classList.add("hidden");
+          }
+        } finally {
+          dmaAiE1Nm.disabled = false;
+          dmaAiE1Nm.textContent = aiBtnLabel;
         }
       });
     }
@@ -803,8 +938,12 @@ export function initDma(supabase) {
           status: "completed",
           company_profile: companyProfile,
         });
-        if (ok) showDmaToast("DMA saved.");
         render();
+        if (ok) {
+          queueMicrotask(() =>
+            showDmaInlineMessage("DMA saved.", "success")
+          );
+        }
       });
       document.getElementById("dma-regen")?.addEventListener("click", async () => {
         drList = withRowIds(buildApplicableDrList(topicAssessments));
@@ -816,7 +955,7 @@ export function initDma(supabase) {
         const title = document.getElementById("dma-add-title")?.value?.trim() || "";
         const std = document.getElementById("dma-add-std")?.value?.trim() || "ESRS";
         if (!ref || !title) {
-          showDmaToast("Add DR reference and title.");
+          showDmaInlineMessage("Add DR reference and title.", "error");
           return;
         }
         drList = [

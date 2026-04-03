@@ -947,6 +947,18 @@ body {
   border-radius: 6px;
 }
 
+.dma-e1-sub-invalid {
+  margin: 0.65rem 0 0;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: #b91c1c;
+  max-width: 40rem;
+  background: rgba(185, 28, 28, 0.06);
+  border: 1px solid rgba(185, 28, 28, 0.25);
+  border-radius: 6px;
+}
+
 .dma-topic-grid {
   display: grid;
   gap: 0.5rem;

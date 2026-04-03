@@ -19,7 +19,7 @@ import OpenAI from "openai";
  */
 
 const OMISSION_REASON_OPTIONS = [
-  "Phase-in provision (Appendix C ESRS 1)",
+  "Phase-in provision (Appendix D, amended ESRS 1)",
   "Undue cost or effort",
   "Other",
 ];
@@ -42,32 +42,61 @@ const E1_SUB_KEYS = [
   { key: "energy", label: "Energy" },
 ];
 
+/** Stored in topic_assessments JSON for "Requires further assessment" (E1 topic and sub-topics). */
+const E1_REQUIRES_FURTHER_ASSESSMENT = "requires_further_assessment";
+
+/**
+ * Parent E1 is Material or Requires further assessment but all three sub-topics
+ * are explicitly Not material — invalid for Step 2 (must clear subs or fix selections).
+ * @param {any} e1
+ */
+function isE1AllSubtopicsExplicitlyNotMaterial(e1) {
+  if (
+    !e1 ||
+    (e1.level !== "material" && e1.level !== E1_REQUIRES_FURTHER_ASSESSMENT)
+  ) {
+    return false;
+  }
+  const s = e1.subtopics || {};
+  return (
+    s.mitigation === "not_material" &&
+    s.adaptation === "not_material" &&
+    s.energy === "not_material"
+  );
+}
+
 const E1_TOPIC_DISPLAY_NAME = "Climate change";
 
 function topicE1MaterialityLabel(level) {
   if (level === "material") return "Material";
   if (level === "not_material") return "Not material";
-  if (level === "unsure") return "Requires further assessment";
+  if (level === E1_REQUIRES_FURTHER_ASSESSMENT) return "Requires further assessment";
   return "";
 }
 
 /** Explicit selection or inherited from E1 topic level when sub-topic is blank. */
 function effectiveSubtopicValue(sub, e1, k) {
   const v = sub[k];
-  if (v === "material" || v === "not_material") return v;
+  if (
+    v === "material" ||
+    v === "not_material" ||
+    v === E1_REQUIRES_FURTHER_ASSESSMENT
+  ) {
+    return v;
+  }
   return e1.level ?? null;
 }
 
 function effectiveSubtopicIncludesDr(sub, e1, k) {
   const v = effectiveSubtopicValue(sub, e1, k);
-  return v === "material" || v === "unsure";
+  return v === "material" || v === E1_REQUIRES_FURTHER_ASSESSMENT;
 }
 
 function effectiveSubtopicDisplayLabel(sub, e1, k) {
   const v = effectiveSubtopicValue(sub, e1, k);
   if (v === "material") return "Material";
   if (v === "not_material") return "Not material";
-  if (v === "unsure") return "Requires further assessment";
+  if (v === E1_REQUIRES_FURTHER_ASSESSMENT) return "Requires further assessment";
   return "";
 }
 
@@ -100,19 +129,33 @@ function drRowTableColumns(ref, standard, topicAssessments) {
   const subKeyList = E1_SUB_KEYS.map((x) => x.key);
   const hasGranular =
     expanded &&
-    subKeyList.some((k) => sub[k] === "material" || sub[k] === "not_material");
+    subKeyList.some(
+      (k) =>
+        sub[k] === "material" ||
+        sub[k] === "not_material" ||
+        sub[k] === E1_REQUIRES_FURTHER_ASSESSMENT
+    );
 
   if (!hasGranular) {
     return {
       topic: E1_TOPIC_DISPLAY_NAME,
-      subtopic: "",
+      subtopic:
+        ref === "E1-8" ? "Climate change mitigation · Energy" : "",
       materiality: topicE1MaterialityLabel(e1.level),
     };
   }
 
   const subsForRef = [];
   if (
-    ["E1-1", "E1-4", "E1-5", "E1-6", "E1-8"].includes(ref) &&
+    [
+      "E1-1",
+      "E1-4",
+      "E1-5",
+      "E1-6",
+      "E1-8",
+      "E1-9",
+      "E1-10",
+    ].includes(ref) &&
     effectiveSubtopicIncludesDr(sub, e1, "mitigation")
   ) {
     subsForRef.push("mitigation");
@@ -307,15 +350,36 @@ function normalizeTopicAssessments(raw) {
   Object.keys(d).forEach((k) => {
     if (raw[k] != null && typeof raw[k] === "object") {
       if (k === "E1") {
-        const coerceSub = (v) =>
-          v === "unsure" ? null : v ?? null;
+        const coerceE1Level = (v) => {
+          if (v === "unsure") return E1_REQUIRES_FURTHER_ASSESSMENT;
+          if (
+            v === "material" ||
+            v === "not_material" ||
+            v === E1_REQUIRES_FURTHER_ASSESSMENT
+          ) {
+            return v;
+          }
+          return null;
+        };
+        const coerceSub = (v) => {
+          if (v === "unsure") return E1_REQUIRES_FURTHER_ASSESSMENT;
+          if (
+            v === "material" ||
+            v === "not_material" ||
+            v === E1_REQUIRES_FURTHER_ASSESSMENT
+          ) {
+            return v;
+          }
+          return null;
+        };
+        const merged = { ...d.E1, ...raw.E1 };
         d.E1 = {
-          ...d.E1,
-          ...raw.E1,
+          ...merged,
+          level: coerceE1Level(merged.level),
           subtopics: {
-            mitigation: coerceSub(raw.E1?.subtopics?.mitigation),
-            adaptation: coerceSub(raw.E1?.subtopics?.adaptation),
-            energy: coerceSub(raw.E1?.subtopics?.energy),
+            mitigation: coerceSub(merged.subtopics?.mitigation),
+            adaptation: coerceSub(merged.subtopics?.adaptation),
+            energy: coerceSub(merged.subtopics?.energy),
           },
         };
       } else {
@@ -334,14 +398,21 @@ function buildE1DrRows(e1) {
   if (!e1 || e1.level === "not_material") return [];
 
   const level = e1.level;
-  if (level !== "material" && level !== "unsure") return [];
+  if (level !== "material" && level !== E1_REQUIRES_FURTHER_ASSESSMENT) {
+    return [];
+  }
 
   const sub = e1.subtopics || {};
   const expanded = !!e1.subExpanded;
   const subKeys = ["mitigation", "adaptation", "energy"];
   const hasGranular =
     expanded &&
-    subKeys.some((k) => sub[k] === "material" || sub[k] === "not_material");
+    subKeys.some(
+      (k) =>
+        sub[k] === "material" ||
+        sub[k] === "not_material" ||
+        sub[k] === E1_REQUIRES_FURTHER_ASSESSMENT
+    );
 
   if (!hasGranular) {
     return Object.keys(E1_DR_CATALOG).map((ref) => ({
@@ -356,7 +427,9 @@ function buildE1DrRows(e1) {
 
   const refs = new Set();
   if (includeSubForDr("mitigation")) {
-    ["E1-1", "E1-4", "E1-5", "E1-6", "E1-8"].forEach((r) => refs.add(r));
+    ["E1-1", "E1-4", "E1-5", "E1-6", "E1-8", "E1-9", "E1-10"].forEach(
+      (r) => refs.add(r)
+    );
   }
   if (includeSubForDr("adaptation")) {
     ["E1-2", "E1-3", "E1-11"].forEach((r) => refs.add(r));
@@ -721,7 +794,7 @@ export function initDma(supabase) {
     const opts = [
       { v: "material", l: "Material" },
       { v: "not_material", l: "Not material" },
-      { v: "unsure", l: "Requires further assessment" },
+      { v: E1_REQUIRES_FURTHER_ASSESSMENT, l: "Requires further assessment" },
     ];
     return opts
       .map(
@@ -739,6 +812,7 @@ export function initDma(supabase) {
     const opts = [
       { v: "material", l: "Material" },
       { v: "not_material", l: "Not material" },
+      { v: E1_REQUIRES_FURTHER_ASSESSMENT, l: "Requires further assessment" },
     ];
     return opts
       .map(
@@ -786,7 +860,7 @@ export function initDma(supabase) {
           <strong>E1 — ${escapeHtml(ESRS_TOPICS.find((x) => x.code === "E1")?.name || "Climate change")}</strong>
         </div>
         ${materialityRowTopic("e1-level", e1.level, false, false)}
-        <div id="dma-e1-further-note" class="dma-e1-further-note ${e1.level !== "unsure" ? "hidden" : ""}" role="status">
+        <div id="dma-e1-further-note" class="dma-e1-further-note ${e1.level !== E1_REQUIRES_FURTHER_ASSESSMENT ? "hidden" : ""}" role="status">
           This topic will be treated as material until assessment is complete. All related DRs will be included.
         </div>
         <div id="dma-e1-notmat-warning" class="dma-warning ${warnHidden ? "hidden" : ""}" role="status">
@@ -804,6 +878,9 @@ export function initDma(supabase) {
             </div>`;
           }).join("")}
         </details>
+        <div id="dma-e1-sub-invalid" class="dma-e1-sub-invalid ${isE1AllSubtopicsExplicitlyNotMaterial(e1) ? "" : "hidden"}" role="alert">
+          At least one sub-topic must be Material or Requires further assessment when the parent topic is material. If none of the sub-topics are material, reconsider the parent topic materiality decision.
+        </div>
       </div>
     `;
 
@@ -827,7 +904,7 @@ export function initDma(supabase) {
         <p class="dma-footnote-soon">More standards coming soon</p>
         <div class="dma-actions">
           <button type="button" class="btn btn-secondary" id="dma-s2-back">Back</button>
-          <button type="button" class="btn btn-primary" id="dma-s2-next">Next</button>
+          <button type="button" class="btn btn-primary" id="dma-s2-next" ${isE1AllSubtopicsExplicitlyNotMaterial(e1) ? "disabled" : ""}>Next</button>
         </div>
       </div>
     `;
@@ -838,7 +915,7 @@ export function initDma(supabase) {
     const lvl = e1.level;
     let body = "";
 
-    if (lvl === "material" || lvl === "unsure") {
+    if (lvl === "material" || lvl === E1_REQUIRES_FURTHER_ASSESSMENT) {
       body = `
         <div class="field">
           <label>Climate change (E1) — materiality: ${escapeHtml(lvl === "material" ? "Material" : "Requires further assessment")}</label>
@@ -1157,10 +1234,21 @@ export function initDma(supabase) {
           );
           return;
         }
+        if (isE1AllSubtopicsExplicitlyNotMaterial(topicAssessments.E1)) {
+          return;
+        }
         setStep(3);
         await persistPartial({ topic_assessments: topicAssessments, company_profile: companyProfile });
         render();
       });
+
+      function updateE1SubtopicValidation() {
+        const invalid = isE1AllSubtopicsExplicitlyNotMaterial(topicAssessments.E1);
+        const msg = document.getElementById("dma-e1-sub-invalid");
+        const next = document.getElementById("dma-s2-next");
+        if (msg) msg.classList.toggle("hidden", !invalid);
+        if (next) next.disabled = invalid;
+      }
 
       function updateE1NotMaterialWarning() {
         const w = document.getElementById("dma-e1-notmat-warning");
@@ -1174,19 +1262,28 @@ export function initDma(supabase) {
         const n = document.getElementById("dma-e1-further-note");
         if (!n) return;
         const el = document.querySelector('input[name="e1-level"]:checked');
-        n.classList.toggle("hidden", el?.value !== "unsure");
+        n.classList.toggle("hidden", el?.value !== E1_REQUIRES_FURTHER_ASSESSMENT);
       }
 
       document.querySelectorAll('input[name="e1-level"]').forEach((inp) => {
         inp.addEventListener("change", () => {
           const c = document.querySelector('input[name="e1-level"]:checked');
           topicAssessments.E1.level = c ? c.value : null;
+          readStep2FromDom();
           updateE1NotMaterialWarning();
           updateE1FurtherAssessmentNote();
+          updateE1SubtopicValidation();
+        });
+      });
+      document.querySelectorAll('input[name^="e1-sub-"]').forEach((inp) => {
+        inp.addEventListener("change", () => {
+          readStep2FromDom();
+          updateE1SubtopicValidation();
         });
       });
       updateE1NotMaterialWarning();
       updateE1FurtherAssessmentNote();
+      updateE1SubtopicValidation();
 
       root.querySelectorAll(".dma-mat-clear").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -1199,13 +1296,17 @@ export function initDma(supabase) {
             });
           if (name === "e1-level") {
             topicAssessments.E1.level = null;
+            readStep2FromDom();
             updateE1NotMaterialWarning();
             updateE1FurtherAssessmentNote();
+            updateE1SubtopicValidation();
           } else if (name.startsWith("e1-sub-")) {
             const key = name.slice("e1-sub-".length);
             if (topicAssessments.E1.subtopics) {
               topicAssessments.E1.subtopics[key] = null;
             }
+            readStep2FromDom();
+            updateE1SubtopicValidation();
           }
         });
       });
@@ -1213,6 +1314,8 @@ export function initDma(supabase) {
       document.querySelector(".dma-details")?.addEventListener("toggle", () => {
         const d = document.querySelector(".dma-details");
         if (topicAssessments.E1) topicAssessments.E1.subExpanded = !!d?.open;
+        readStep2FromDom();
+        updateE1SubtopicValidation();
       });
     }
     if (step === 3) {

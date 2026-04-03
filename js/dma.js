@@ -5,7 +5,24 @@
 
 import OpenAI from "openai";
 
-/** @typedef {{ ref: string, title: string, standard: string, mandatory: boolean, id?: string }} DrRow */
+/**
+ * @typedef {{
+ *   ref: string,
+ *   title: string,
+ *   standard: string,
+ *   mandatory: boolean,
+ *   id?: string,
+ *   omitted?: boolean,
+ *   omissionReason?: string,
+ *   omissionJustification?: string,
+ * }} DrRow
+ */
+
+const OMISSION_REASON_OPTIONS = [
+  "Phase-in provision (Appendix C ESRS 1)",
+  "Undue cost or effort",
+  "Other",
+];
 
 const ESRS_TOPICS = [
   { code: "E1", name: "Climate change", interactive: true },
@@ -24,6 +41,108 @@ const E1_SUB_KEYS = [
   { key: "adaptation", label: "Climate change adaptation" },
   { key: "energy", label: "Energy" },
 ];
+
+const E1_TOPIC_DISPLAY_NAME = "Climate change";
+
+function topicE1MaterialityLabel(level) {
+  if (level === "material") return "Material";
+  if (level === "not_material") return "Not material";
+  if (level === "unsure") return "Requires further assessment";
+  return "";
+}
+
+/** Explicit selection or inherited from E1 topic level when sub-topic is blank. */
+function effectiveSubtopicValue(sub, e1, k) {
+  const v = sub[k];
+  if (v === "material" || v === "not_material") return v;
+  return e1.level ?? null;
+}
+
+function effectiveSubtopicIncludesDr(sub, e1, k) {
+  const v = effectiveSubtopicValue(sub, e1, k);
+  return v === "material" || v === "unsure";
+}
+
+function effectiveSubtopicDisplayLabel(sub, e1, k) {
+  const v = effectiveSubtopicValue(sub, e1, k);
+  if (v === "material") return "Material";
+  if (v === "not_material") return "Not material";
+  if (v === "unsure") return "Requires further assessment";
+  return "";
+}
+
+const ESRS2_DR_TOPIC_LABEL = "ESRS 2 General";
+
+/**
+ * Read-only Step 4 table columns (derived from topic screening).
+ * @param {string} ref
+ * @param {string} standard
+ * @param {Record<string, any>} topicAssessments
+ * @returns {{ topic: string, subtopic: string, materiality: string }}
+ */
+function drRowTableColumns(ref, standard, topicAssessments) {
+  if (standard === "ESRS 2") {
+    return {
+      topic: ESRS2_DR_TOPIC_LABEL,
+      subtopic: "",
+      materiality: "All undertakings",
+    };
+  }
+  if (standard !== "ESRS E1") {
+    return { topic: "", subtopic: "", materiality: "" };
+  }
+  const e1 = topicAssessments?.E1;
+  if (!e1 || e1.level === "not_material") {
+    return { topic: E1_TOPIC_DISPLAY_NAME, subtopic: "", materiality: "" };
+  }
+  const sub = e1.subtopics || {};
+  const expanded = !!e1.subExpanded;
+  const subKeyList = E1_SUB_KEYS.map((x) => x.key);
+  const hasGranular =
+    expanded &&
+    subKeyList.some((k) => sub[k] === "material" || sub[k] === "not_material");
+
+  if (!hasGranular) {
+    return {
+      topic: E1_TOPIC_DISPLAY_NAME,
+      subtopic: "",
+      materiality: topicE1MaterialityLabel(e1.level),
+    };
+  }
+
+  const subsForRef = [];
+  if (
+    ["E1-1", "E1-4", "E1-5", "E1-6", "E1-8"].includes(ref) &&
+    effectiveSubtopicIncludesDr(sub, e1, "mitigation")
+  ) {
+    subsForRef.push("mitigation");
+  }
+  if (
+    ["E1-2", "E1-3", "E1-11"].includes(ref) &&
+    effectiveSubtopicIncludesDr(sub, e1, "adaptation")
+  ) {
+    subsForRef.push("adaptation");
+  }
+  if (
+    ["E1-7", "E1-8"].includes(ref) &&
+    effectiveSubtopicIncludesDr(sub, e1, "energy")
+  ) {
+    subsForRef.push("energy");
+  }
+
+  const subLabels = subsForRef.map(
+    (k) => E1_SUB_KEYS.find((s) => s.key === k)?.label || k
+  );
+  const matLabels = subsForRef.map((k) =>
+    effectiveSubtopicDisplayLabel(sub, e1, k)
+  );
+
+  return {
+    topic: E1_TOPIC_DISPLAY_NAME,
+    subtopic: subLabels.join(" · "),
+    materiality: matLabels.join(" · "),
+  };
+}
 
 /** ESRS 2 — always included in applicable DR list */
 const ESRS2_BASE_DRS = [
@@ -82,6 +201,62 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function parseEntitySpecificDisclosures(raw) {
+  if (raw == null || String(raw).trim() === "") return [];
+  if (typeof raw === "string") {
+    try {
+      const j = JSON.parse(raw);
+      if (Array.isArray(j)) {
+        return j.map(normalizeEntitySpecificEntry);
+      }
+    } catch {
+      return [
+        normalizeEntitySpecificEntry({
+          id: `esd-legacy-${Date.now()}`,
+          topic: "",
+          description: String(raw),
+        }),
+      ];
+    }
+  }
+  return [];
+}
+
+function normalizeEntitySpecificEntry(e) {
+  return {
+    id:
+      e.id ||
+      `esd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    topic: e.topic != null ? String(e.topic) : "",
+    description: e.description != null ? String(e.description) : "",
+    frameworkEnabled: !!e.frameworkEnabled,
+    frameworkStandard:
+      e.frameworkStandard != null ? String(e.frameworkStandard) : "",
+    bestPracticesEnabled: !!e.bestPracticesEnabled,
+    bestPracticesDescription:
+      e.bestPracticesDescription != null
+        ? String(e.bestPracticesDescription)
+        : "",
+  };
+}
+
+/** True when an entry has no user-visible content (used when loading from DB). */
+function isEntitySpecificEntryEmpty(e) {
+  const n = normalizeEntitySpecificEntry(e);
+  return (
+    !n.topic.trim() &&
+    !n.description.trim() &&
+    !n.frameworkEnabled &&
+    !n.frameworkStandard.trim() &&
+    !n.bestPracticesEnabled &&
+    !n.bestPracticesDescription.trim()
+  );
+}
+
+function newEntitySpecificEntry() {
+  return normalizeEntitySpecificEntry({});
+}
+
 function defaultCompanyProfile() {
   return {
     companyName: "",
@@ -132,13 +307,15 @@ function normalizeTopicAssessments(raw) {
   Object.keys(d).forEach((k) => {
     if (raw[k] != null && typeof raw[k] === "object") {
       if (k === "E1") {
+        const coerceSub = (v) =>
+          v === "unsure" ? null : v ?? null;
         d.E1 = {
           ...d.E1,
           ...raw.E1,
           subtopics: {
-            mitigation: raw.E1?.subtopics?.mitigation ?? null,
-            adaptation: raw.E1?.subtopics?.adaptation ?? null,
-            energy: raw.E1?.subtopics?.energy ?? null,
+            mitigation: coerceSub(raw.E1?.subtopics?.mitigation),
+            adaptation: coerceSub(raw.E1?.subtopics?.adaptation),
+            energy: coerceSub(raw.E1?.subtopics?.energy),
           },
         };
       } else {
@@ -164,9 +341,7 @@ function buildE1DrRows(e1) {
   const subKeys = ["mitigation", "adaptation", "energy"];
   const hasGranular =
     expanded &&
-    subKeys.some((k) => sub[k] === "material" || sub[k] === "unsure" || sub[k] === "not_material");
-
-  const includeSub = (k) => sub[k] === "material" || sub[k] === "unsure";
+    subKeys.some((k) => sub[k] === "material" || sub[k] === "not_material");
 
   if (!hasGranular) {
     return Object.keys(E1_DR_CATALOG).map((ref) => ({
@@ -177,14 +352,16 @@ function buildE1DrRows(e1) {
     }));
   }
 
+  const includeSubForDr = (k) => effectiveSubtopicIncludesDr(sub, e1, k);
+
   const refs = new Set();
-  if (includeSub("mitigation")) {
+  if (includeSubForDr("mitigation")) {
     ["E1-1", "E1-4", "E1-5", "E1-6", "E1-8"].forEach((r) => refs.add(r));
   }
-  if (includeSub("adaptation")) {
+  if (includeSubForDr("adaptation")) {
     ["E1-2", "E1-3", "E1-11"].forEach((r) => refs.add(r));
   }
-  if (includeSub("energy")) {
+  if (includeSubForDr("energy")) {
     ["E1-7", "E1-8"].forEach((r) => refs.add(r));
   }
 
@@ -265,7 +442,19 @@ export function initDma(supabase) {
   let topicAssessments = defaultTopicAssessments();
   /** @type {DrRow[]} */
   let drList = [];
-  let entitySpecificDisclosures = "";
+  let entitySpecificEntries = [];
+  /** @type {string | null} */
+  let dmaStep4OmitFormRowId = null;
+  /** Step 4 DR table column visibility (not persisted). */
+  let step4ColumnVisibility = {
+    topic: true,
+    subtopic: true,
+    materiality: true,
+    ref: true,
+    title: true,
+    standard: true,
+    actions: true,
+  };
   let status = "in_progress";
 
   async function resolveReportingPeriodId() {
@@ -295,7 +484,17 @@ export function initDma(supabase) {
     companyProfile = defaultCompanyProfile();
     topicAssessments = defaultTopicAssessments();
     drList = [];
-    entitySpecificDisclosures = "";
+    entitySpecificEntries = [];
+    dmaStep4OmitFormRowId = null;
+    step4ColumnVisibility = {
+      topic: true,
+      subtopic: true,
+      materiality: true,
+      ref: true,
+      title: true,
+      standard: true,
+      actions: true,
+    };
     status = "in_progress";
 
     if (!reportingPeriodId) {
@@ -327,7 +526,9 @@ export function initDma(supabase) {
       companyProfile = normalizeCompanyProfile(data.company_profile);
       topicAssessments = normalizeTopicAssessments(data.topic_assessments);
       drList = Array.isArray(data.dr_list) ? withRowIds(data.dr_list) : [];
-      entitySpecificDisclosures = data.entity_specific_disclosures || "";
+      entitySpecificEntries = parseEntitySpecificDisclosures(
+        data.entity_specific_disclosures
+      ).filter((e) => !isEntitySpecificEntryEmpty(e));
       status = data.status || "in_progress";
     }
     render();
@@ -343,21 +544,25 @@ export function initDma(supabase) {
     const { data: userData, error: uErr } = await supabase.auth.getUser();
     if (uErr || !userData?.user) return false;
 
+    const esdStr =
+      patch.entity_specific_disclosures !== undefined
+        ? patch.entity_specific_disclosures
+        : JSON.stringify(entitySpecificEntries);
+
     const base = {
       user_id: userData.user.id,
       reporting_period_id: reportingPeriodId,
       company_profile: { ...companyProfile, ...patch.company_profile },
       topic_assessments: patch.topic_assessments ?? topicAssessments,
       dr_list: patch.dr_list ?? drList,
-      entity_specific_disclosures:
-        patch.entity_specific_disclosures ?? entitySpecificDisclosures,
+      entity_specific_disclosures: esdStr,
       status: patch.status ?? status,
     };
 
     companyProfile = normalizeCompanyProfile(base.company_profile);
     topicAssessments = normalizeTopicAssessments(base.topic_assessments);
     drList = base.dr_list;
-    entitySpecificDisclosures = base.entity_specific_disclosures;
+    entitySpecificEntries = parseEntitySpecificDisclosures(esdStr);
     status = base.status;
 
     if (assessmentId) {
@@ -367,7 +572,7 @@ export function initDma(supabase) {
           company_profile: companyProfile,
           topic_assessments: topicAssessments,
           dr_list: drList,
-          entity_specific_disclosures: entitySpecificDisclosures,
+          entity_specific_disclosures: esdStr,
           status,
         })
         .eq("id", assessmentId)
@@ -386,7 +591,7 @@ export function initDma(supabase) {
           company_profile: companyProfile,
           topic_assessments: topicAssessments,
           dr_list: drList,
-          entity_specific_disclosures: entitySpecificDisclosures,
+          entity_specific_disclosures: esdStr,
           status,
         })
         .select("id")
@@ -512,11 +717,11 @@ export function initDma(supabase) {
     `;
   }
 
-  function materialityRadios(name, value, disabled) {
+  function materialityRadiosTopic(name, value, disabled) {
     const opts = [
       { v: "material", l: "Material" },
       { v: "not_material", l: "Not material" },
-      { v: "unsure", l: "Unsure" },
+      { v: "unsure", l: "Requires further assessment" },
     ];
     return opts
       .map(
@@ -530,12 +735,41 @@ export function initDma(supabase) {
       .join("");
   }
 
-  function materialityRow(name, value, disabled, compact) {
+  function materialityRadiosSubtopic(name, value, disabled) {
+    const opts = [
+      { v: "material", l: "Material" },
+      { v: "not_material", l: "Not material" },
+    ];
+    return opts
+      .map(
+        (o) => `
+      <label class="dma-radio ${disabled ? "is-disabled" : ""}">
+        <input type="radio" name="${name}" value="${o.v}" ${value === o.v ? "checked" : ""} ${disabled ? "disabled" : ""} />
+        ${escapeHtml(o.l)}
+      </label>
+    `
+      )
+      .join("");
+  }
+
+  function materialityRowTopic(name, value, disabled, compact) {
     const rowClass = compact ? "dma-mat-row dma-mat-row--compact" : "dma-mat-row";
     return `
       <div class="dma-mat-row-wrap" style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem 0.75rem">
         <div class="${rowClass}">
-          ${materialityRadios(name, value, disabled)}
+          ${materialityRadiosTopic(name, value, disabled)}
+        </div>
+        <button type="button" class="btn btn-secondary btn-compact dma-mat-clear" data-mat-name="${escapeHtml(name)}" ${disabled ? "disabled" : ""}>Clear</button>
+      </div>
+    `;
+  }
+
+  function materialityRowSubtopic(name, value, disabled) {
+    const rowClass = "dma-mat-row dma-mat-row--compact";
+    return `
+      <div class="dma-mat-row-wrap" style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem 0.75rem">
+        <div class="${rowClass}">
+          ${materialityRadiosSubtopic(name, value, disabled)}
         </div>
         <button type="button" class="btn btn-secondary btn-compact dma-mat-clear" data-mat-name="${escapeHtml(name)}" ${disabled ? "disabled" : ""}>Clear</button>
       </div>
@@ -551,7 +785,10 @@ export function initDma(supabase) {
         <div class="dma-topic-head">
           <strong>E1 — ${escapeHtml(ESRS_TOPICS.find((x) => x.code === "E1")?.name || "Climate change")}</strong>
         </div>
-        ${materialityRow("e1-level", e1.level, false, false)}
+        ${materialityRowTopic("e1-level", e1.level, false, false)}
+        <div id="dma-e1-further-note" class="dma-e1-further-note ${e1.level !== "unsure" ? "hidden" : ""}" role="status">
+          This topic will be treated as material until assessment is complete. All related DRs will be included.
+        </div>
         <div id="dma-e1-notmat-warning" class="dma-warning ${warnHidden ? "hidden" : ""}" role="status">
           Note: If climate change is not material, amended ESRS 1 requires a detailed explanation of your conclusions and a forward-looking analysis. You will be asked to document this in the next step.
         </div>
@@ -563,7 +800,7 @@ export function initDma(supabase) {
             return `
             <div class="dma-subtopic">
               <div class="dma-subtopic-label">${escapeHtml(st.label)}</div>
-              ${materialityRow(`e1-sub-${st.key}`, v, false, true)}
+              ${materialityRowSubtopic(`e1-sub-${st.key}`, v, false)}
             </div>`;
           }).join("")}
         </details>
@@ -604,7 +841,7 @@ export function initDma(supabase) {
     if (lvl === "material" || lvl === "unsure") {
       body = `
         <div class="field">
-          <label>Climate change (E1) — materiality: ${escapeHtml(lvl === "material" ? "Material" : "Unsure")}</label>
+          <label>Climate change (E1) — materiality: ${escapeHtml(lvl === "material" ? "Material" : "Requires further assessment")}</label>
           <p class="field-hint">Include any sub-topic judgments (mitigation, adaptation, energy) in this single topic-level narrative.</p>
           <textarea id="dma-e1-reason" class="dma-textarea dma-textarea--reasoning" placeholder="Document your reasoning for this conclusion (E1 as a whole, including sub-topics where relevant).">${escapeHtml(e1.reasoning || "")}</textarea>
         </div>
@@ -639,52 +876,174 @@ export function initDma(supabase) {
     `;
   }
 
+  const STEP4_COL_DEFS = [
+    ["topic", "Topic"],
+    ["subtopic", "Sub-topic"],
+    ["materiality", "Materiality decision"],
+    ["ref", "DR reference"],
+    ["title", "Title"],
+    ["standard", "Standard"],
+    ["actions", "Omit"],
+  ];
+
+  function applyStep4ColumnVisibility() {
+    STEP4_COL_DEFS.forEach(([k]) => {
+      const visible = step4ColumnVisibility[k];
+      root.querySelectorAll(`[data-dr-col="${k}"]`).forEach((el) => {
+        el.classList.toggle("dma-dr-col--hidden", !visible);
+      });
+    });
+  }
+
+  function renderEntitySpecificSection() {
+    const blocks = entitySpecificEntries
+      .map(
+        (e) => `
+      <div class="dma-esd-entry" data-esd-id="${escapeHtml(e.id)}">
+        <div class="field">
+          <label>Topic</label>
+          <input type="text" class="dma-input dma-esd-topic" value="${escapeHtml(e.topic)}" />
+        </div>
+        <div class="field">
+          <label>Description of the material impact, risk or opportunity</label>
+          <textarea class="dma-textarea dma-esd-description" rows="3">${escapeHtml(e.description)}</textarea>
+        </div>
+        <p class="dma-esd-comp-hint"><strong>Ensuring comparability (amended ESRS 1, para. 12)</strong></p>
+        <p class="field-hint dma-esd-comp-note">Select at least one approach to ensure comparability over time and with other undertakings in the same sector</p>
+        <label class="dma-esd-check">
+          <input type="checkbox" class="dma-esd-fw" ${e.frameworkEnabled ? "checked" : ""} />
+          Following a framework or reporting standard
+        </label>
+        <div class="field dma-esd-fw-wrap ${e.frameworkEnabled ? "" : "hidden"}">
+          <label>Which standard? (e.g. GRI Sector Standards, IFRS industry-based guidance)</label>
+          <input type="text" class="dma-input dma-esd-fw-std" value="${escapeHtml(e.frameworkStandard)}" />
+        </div>
+        <label class="dma-esd-check">
+          <input type="checkbox" class="dma-esd-bp" ${e.bestPracticesEnabled ? "checked" : ""} />
+          Using available best practices
+        </label>
+        <div class="field dma-esd-bp-wrap ${e.bestPracticesEnabled ? "" : "hidden"}">
+          <label>Describe the best practices used</label>
+          <textarea class="dma-textarea dma-esd-bp-desc" rows="2">${escapeHtml(e.bestPracticesDescription)}</textarea>
+        </div>
+        <button type="button" class="btn btn-secondary btn-compact dma-esd-remove" data-esd-id="${escapeHtml(e.id)}">Remove</button>
+      </div>
+    `
+      )
+      .join("");
+
+    return `
+      <div class="dma-esd-section">
+        <h4 class="dma-esd-heading">Entity-specific disclosures</h4>
+        <p class="dma-esd-sub">Add disclosures for material topics not covered or not covered with sufficient granularity by ESRS (amended ESRS 1, para. 11)</p>
+        <div id="dma-esd-entries">${blocks}</div>
+        <button type="button" id="dma-esd-add" class="btn btn-secondary btn-compact">+ Add disclosure</button>
+      </div>
+    `;
+  }
+
   function renderStep4() {
     const rows = drList.length ? drList : buildApplicableDrList(topicAssessments);
     const withIds = withRowIds(rows);
+    const v = step4ColumnVisibility;
+    const h = (k) => (!v[k] ? " dma-dr-col--hidden" : "");
+    const omitOpts = OMISSION_REASON_OPTIONS.map(
+      (o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`
+    ).join("");
+
+    const columnPickerRows = STEP4_COL_DEFS.map(
+      ([key, label]) => `
+        <label class="dma-dr-columns-row">
+          <input type="checkbox" class="dma-dr-col-toggle" data-dr-col-toggle="${escapeHtml(key)}" ${v[key] ? "checked" : ""} />
+          <span>${escapeHtml(label)}</span>
+        </label>`
+    ).join("");
+
     const tableRows = withIds
-      .map(
-        (r) => `
-      <tr data-dr-id="${escapeHtml(r.id || "")}">
-        <td><code>${escapeHtml(r.ref)}</code></td>
-        <td>${escapeHtml(r.title)}</td>
-        <td>${escapeHtml(r.standard)}</td>
-        <td>${r.mandatory ? "Yes" : "No"}</td>
-        <td><button type="button" class="btn btn-secondary btn-compact dma-remove-dr" data-id="${escapeHtml(r.id || "")}">Remove</button></td>
+      .map((r) => {
+        const id = r.id || "";
+        const omitted = !!r.omitted;
+        const strikeClass = omitted ? "dma-dr-cell--strike" : "";
+        const cols = drRowTableColumns(r.ref, r.standard, topicAssessments);
+        const omitNote =
+          omitted && r.omissionReason
+            ? `<div class="dma-dr-omit-note">${escapeHtml(r.omissionReason)}${r.omissionJustification ? ` — ${escapeHtml(r.omissionJustification)}` : ""}</div>`
+            : "";
+        const actions = omitted
+          ? `<button type="button" class="btn btn-secondary btn-compact dma-undo-omit" data-dr-id="${escapeHtml(id)}">Undo omission</button>`
+          : `<button type="button" class="btn btn-secondary btn-compact dma-omit-dr" data-dr-id="${escapeHtml(id)}">Omit</button>`;
+        const omitFormRow =
+          dmaStep4OmitFormRowId && String(dmaStep4OmitFormRowId) === String(id)
+            ? `<tr class="dma-omit-form-row" data-for-dr-id="${escapeHtml(id)}">
+            <td colspan="7">
+              <div class="dma-omit-form-inner">
+                <div class="field">
+                  <label>Reason for omission</label>
+                  <select class="dma-input dma-omit-reason-select">
+                    <option value="">Select…</option>
+                    ${omitOpts}
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Justification</label>
+                  <input type="text" class="dma-input dma-omit-justification" placeholder="Required" />
+                </div>
+                <div class="dma-omit-form-actions">
+                  <button type="button" class="btn btn-primary btn-compact dma-omit-confirm" data-dr-id="${escapeHtml(id)}">Confirm omission</button>
+                  <button type="button" class="btn btn-secondary btn-compact dma-omit-cancel">Cancel</button>
+                </div>
+                <p class="dma-omit-form-err hidden" role="alert" style="margin:0.35rem 0 0;font-size:0.8125rem;color:#b91c1c;"></p>
+              </div>
+            </td>
+          </tr>`
+            : "";
+        return `
+      <tr class="dma-dr-row ${omitted ? "dma-dr-row--omitted" : ""}" data-dr-id="${escapeHtml(id)}">
+        <td data-dr-col="topic" class="dma-dr-col${h("topic")} ${strikeClass}">${escapeHtml(cols.topic)}</td>
+        <td data-dr-col="subtopic" class="dma-dr-col${h("subtopic")} ${strikeClass}">${escapeHtml(cols.subtopic)}</td>
+        <td data-dr-col="materiality" class="dma-dr-col${h("materiality")} ${strikeClass}">${escapeHtml(cols.materiality)}</td>
+        <td data-dr-col="ref" class="dma-dr-col${h("ref")} ${strikeClass}"><code>${escapeHtml(r.ref)}</code></td>
+        <td data-dr-col="title" class="dma-dr-col${h("title")} ${strikeClass}">${escapeHtml(r.title)}${omitNote}</td>
+        <td data-dr-col="standard" class="dma-dr-col${h("standard")} ${strikeClass}">${escapeHtml(r.standard)}</td>
+        <td data-dr-col="actions" class="dma-dr-col dma-dr-actions${h("actions")}">${actions}</td>
       </tr>
-    `
-      )
+      ${omitFormRow}
+    `;
+      })
       .join("");
 
     return `
       <div class="dma-step">
         <h3 class="dma-step-title">Step 4 — Applicable disclosure requirements</h3>
         <p class="dma-step-intro">ESRS 2 DRs apply together with E1 DRs derived from your E1 screening. You can adjust the list manually.</p>
-        <div class="dma-table-wrap">
-          <table class="dma-table">
+        <div class="dma-step4-dr-block">
+        <div class="dma-dr-columns-toolbar">
+          <details class="dma-dr-columns-details">
+            <summary class="btn btn-secondary btn-compact dma-dr-columns-summary">Columns</summary>
+            <div class="dma-dr-columns-dropdown" role="group" aria-label="Show or hide columns">
+              ${columnPickerRows}
+            </div>
+          </details>
+        </div>
+        <div class="dma-table-scroll-y dma-table-wrap dma-table-wrap--step4">
+          <table class="dma-table dma-table--step4">
             <thead>
               <tr>
-                <th>DR reference</th>
-                <th>Title</th>
-                <th>Standard</th>
-                <th>Mandatory</th>
-                <th></th>
+                <th data-dr-col="topic" class="dma-dr-col${h("topic")}">Topic</th>
+                <th data-dr-col="subtopic" class="dma-dr-col${h("subtopic")}">Sub-topic</th>
+                <th data-dr-col="materiality" class="dma-dr-col${h("materiality")}">Materiality decision</th>
+                <th data-dr-col="ref" class="dma-dr-col${h("ref")}">DR reference</th>
+                <th data-dr-col="title" class="dma-dr-col${h("title")}">Title</th>
+                <th data-dr-col="standard" class="dma-dr-col${h("standard")}">Standard</th>
+                <th data-dr-col="actions" class="dma-dr-col dma-dr-actions-th${h("actions")}" aria-label="Omit"></th>
               </tr>
             </thead>
-            <tbody>${tableRows || '<tr><td colspan="5">No rows</td></tr>'}</tbody>
+            <tbody>${tableRows || '<tr><td colspan="7">No rows</td></tr>'}</tbody>
           </table>
         </div>
-        <div class="dma-add-dr">
-          <input type="text" id="dma-add-ref" class="dma-input dma-input--sm" placeholder="DR ref" />
-          <input type="text" id="dma-add-title" class="dma-input dma-input--flex" placeholder="Title" />
-          <input type="text" id="dma-add-std" class="dma-input dma-input--sm" placeholder="Standard" value="ESRS" />
-          <button type="button" class="btn btn-secondary btn-compact" id="dma-add-dr-btn">Add DR</button>
-        </div>
         <button type="button" class="btn btn-secondary btn-compact" id="dma-regen">Regenerate from topic screening</button>
-        <div class="field" style="margin-top:1rem">
-          <label for="dma-entity-specific">Entity-specific disclosures — describe any material sustainability topics not covered by the DRs listed above.</label>
-          <textarea id="dma-entity-specific" class="dma-textarea" rows="4">${escapeHtml(entitySpecificDisclosures)}</textarea>
         </div>
+        ${renderEntitySpecificSection()}
         <div class="dma-actions">
           <button type="button" class="btn btn-secondary" id="dma-s4-back">Back</button>
           <button type="button" class="btn btn-primary" id="dma-s4-save">Approve and save</button>
@@ -753,6 +1112,26 @@ export function initDma(supabase) {
     }
   }
 
+  function readEntitySpecificFromDom() {
+    const out = [];
+    root.querySelectorAll(".dma-esd-entry").forEach((el) => {
+      const id = el.getAttribute("data-esd-id") || "";
+      out.push(
+        normalizeEntitySpecificEntry({
+          id,
+          topic: el.querySelector(".dma-esd-topic")?.value ?? "",
+          description: el.querySelector(".dma-esd-description")?.value ?? "",
+          frameworkEnabled: el.querySelector(".dma-esd-fw")?.checked ?? false,
+          frameworkStandard: el.querySelector(".dma-esd-fw-std")?.value ?? "",
+          bestPracticesEnabled: el.querySelector(".dma-esd-bp")?.checked ?? false,
+          bestPracticesDescription:
+            el.querySelector(".dma-esd-bp-desc")?.value ?? "",
+        })
+      );
+    });
+    entitySpecificEntries = out;
+  }
+
   function bindStepHandlers(step) {
     if (step === 1) {
       document.getElementById("dma-s1-next")?.addEventListener("click", async () => {
@@ -791,14 +1170,23 @@ export function initDma(supabase) {
         w.classList.toggle("hidden", !show);
       }
 
+      function updateE1FurtherAssessmentNote() {
+        const n = document.getElementById("dma-e1-further-note");
+        if (!n) return;
+        const el = document.querySelector('input[name="e1-level"]:checked');
+        n.classList.toggle("hidden", el?.value !== "unsure");
+      }
+
       document.querySelectorAll('input[name="e1-level"]').forEach((inp) => {
         inp.addEventListener("change", () => {
           const c = document.querySelector('input[name="e1-level"]:checked');
           topicAssessments.E1.level = c ? c.value : null;
           updateE1NotMaterialWarning();
+          updateE1FurtherAssessmentNote();
         });
       });
       updateE1NotMaterialWarning();
+      updateE1FurtherAssessmentNote();
 
       root.querySelectorAll(".dma-mat-clear").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -812,6 +1200,7 @@ export function initDma(supabase) {
           if (name === "e1-level") {
             topicAssessments.E1.level = null;
             updateE1NotMaterialWarning();
+            updateE1FurtherAssessmentNote();
           } else if (name.startsWith("e1-sub-")) {
             const key = name.slice("e1-sub-".length);
             if (topicAssessments.E1.subtopics) {
@@ -864,7 +1253,7 @@ export function initDma(supabase) {
           const text = await draftReasoningWithAi(
             companyProfile,
             "E1 Climate change",
-            "Material or unsure",
+            "Material or requires further assessment",
             topicAssessments.E1?.reasoning || ""
           );
           const ta = document.getElementById("dma-e1-reason");
@@ -938,21 +1327,19 @@ export function initDma(supabase) {
     }
     if (step === 4) {
       document.getElementById("dma-s4-back")?.addEventListener("click", async () => {
-        entitySpecificDisclosures = document.getElementById("dma-entity-specific")?.value || "";
+        readEntitySpecificFromDom();
         setStep(3);
         await persistPartial({
           dr_list: drList,
-          entity_specific_disclosures: entitySpecificDisclosures,
           company_profile: companyProfile,
         });
         render();
       });
       document.getElementById("dma-s4-save")?.addEventListener("click", async () => {
-        entitySpecificDisclosures = document.getElementById("dma-entity-specific")?.value || "";
+        readEntitySpecificFromDom();
         status = "completed";
         const ok = await persistPartial({
           dr_list: drList,
-          entity_specific_disclosures: entitySpecificDisclosures,
           status: "completed",
           company_profile: companyProfile,
         });
@@ -964,37 +1351,117 @@ export function initDma(supabase) {
         }
       });
       document.getElementById("dma-regen")?.addEventListener("click", async () => {
+        readEntitySpecificFromDom();
         drList = withRowIds(buildApplicableDrList(topicAssessments));
         await persistPartial({ dr_list: drList });
         render();
       });
-      document.getElementById("dma-add-dr-btn")?.addEventListener("click", async () => {
-        const ref = document.getElementById("dma-add-ref")?.value?.trim() || "";
-        const title = document.getElementById("dma-add-title")?.value?.trim() || "";
-        const std = document.getElementById("dma-add-std")?.value?.trim() || "ESRS";
-        if (!ref || !title) {
-          showDmaInlineMessage("Add DR reference and title.", "error");
-          return;
-        }
-        drList = [
-          ...drList,
-          {
-            id: `custom-${Date.now()}`,
-            ref,
-            title,
-            standard: std,
-            mandatory: false,
-          },
-        ];
-        await persistPartial({ dr_list: drList });
-        render();
+      root.querySelectorAll(".dma-omit-dr").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          dmaStep4OmitFormRowId = btn.getAttribute("data-dr-id");
+          render();
+        });
       });
-      root.querySelectorAll(".dma-remove-dr").forEach((btn) => {
+      root.querySelectorAll(".dma-omit-cancel").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          dmaStep4OmitFormRowId = null;
+          render();
+        });
+      });
+      root.querySelectorAll(".dma-omit-confirm").forEach((btn) => {
         btn.addEventListener("click", async () => {
-          const id = btn.getAttribute("data-id") || "";
-          drList = drList.filter((r) => (r.id || "") !== id);
+          const rowId = btn.getAttribute("data-dr-id") || "";
+          const formTr = btn.closest("tr.dma-omit-form-row");
+          const reason =
+            formTr?.querySelector(".dma-omit-reason-select")?.value?.trim() || "";
+          const just =
+            formTr?.querySelector(".dma-omit-justification")?.value?.trim() ||
+            "";
+          const errP = formTr?.querySelector(".dma-omit-form-err");
+          if (!reason) {
+            if (errP) {
+              errP.textContent = "Select a reason for omission.";
+              errP.classList.remove("hidden");
+            }
+            return;
+          }
+          if (!just) {
+            if (errP) {
+              errP.textContent = "Justification is required.";
+              errP.classList.remove("hidden");
+            }
+            return;
+          }
+          if (errP) {
+            errP.textContent = "";
+            errP.classList.add("hidden");
+          }
+          const dr = drList.find((r) => String(r.id) === String(rowId));
+          if (dr) {
+            dr.omitted = true;
+            dr.omissionReason = reason;
+            dr.omissionJustification = just;
+          }
+          dmaStep4OmitFormRowId = null;
+          readEntitySpecificFromDom();
           await persistPartial({ dr_list: drList });
           render();
+        });
+      });
+      root.querySelectorAll(".dma-undo-omit").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const rowId = btn.getAttribute("data-dr-id") || "";
+          const dr = drList.find((r) => String(r.id) === String(rowId));
+          if (dr) {
+            dr.omitted = false;
+            delete dr.omissionReason;
+            delete dr.omissionJustification;
+          }
+          readEntitySpecificFromDom();
+          await persistPartial({ dr_list: drList });
+          render();
+        });
+      });
+      document.getElementById("dma-esd-add")?.addEventListener("click", async () => {
+        readEntitySpecificFromDom();
+        entitySpecificEntries.push(newEntitySpecificEntry());
+        await persistPartial({ company_profile: companyProfile });
+        render();
+      });
+      root.querySelectorAll(".dma-esd-remove").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const esdId = btn.getAttribute("data-esd-id") || "";
+          readEntitySpecificFromDom();
+          entitySpecificEntries = entitySpecificEntries.filter(
+            (e) => e.id !== esdId
+          );
+          await persistPartial({ company_profile: companyProfile });
+          render();
+        });
+      });
+      root.querySelectorAll(".dma-esd-fw").forEach((cb) => {
+        cb.addEventListener("change", () => {
+          const wrap = cb
+            .closest(".dma-esd-entry")
+            ?.querySelector(".dma-esd-fw-wrap");
+          wrap?.classList.toggle("hidden", !cb.checked);
+        });
+      });
+      root.querySelectorAll(".dma-esd-bp").forEach((cb) => {
+        cb.addEventListener("change", () => {
+          const wrap = cb
+            .closest(".dma-esd-entry")
+            ?.querySelector(".dma-esd-bp-wrap");
+          wrap?.classList.toggle("hidden", !cb.checked);
+        });
+      });
+      root.querySelectorAll(".dma-dr-col-toggle").forEach((cb) => {
+        cb.addEventListener("change", () => {
+          const k = cb.getAttribute("data-dr-col-toggle");
+          if (k && Object.prototype.hasOwnProperty.call(step4ColumnVisibility, k)) {
+            step4ColumnVisibility[k] = cb.checked;
+            applyStep4ColumnVisibility();
+          }
         });
       });
     }

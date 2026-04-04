@@ -41,6 +41,138 @@ function getEF() {
   return window.EmissionFactors;
 }
 
+/** @type {Array<{ id: string, label: string, valueKgCo2ePerUnit: number, activityUnit: string, source: string, groupId: string }>} */
+let customEmissionFactorsList = [];
+
+function normalizeCustomFactorRow(row) {
+  const raw =
+    row.value_kg_co2e_per_unit ?? row.valueKgCo2ePerUnit ?? row.value ?? null;
+  const valueKgCo2ePerUnit =
+    raw === null || raw === undefined || raw === ""
+      ? NaN
+      : Number(raw);
+  return {
+    id: String(row.id ?? ""),
+    label: String(row.label ?? ""),
+    valueKgCo2ePerUnit,
+    activityUnit: String(row.activity_unit ?? row.activityUnit ?? ""),
+    source: String(row.source ?? ""),
+    groupId: String(row.group_id ?? row.groupId ?? ""),
+  };
+}
+
+function getSavedCustomFactorsForGroup(groupId) {
+  return customEmissionFactorsList.filter((f) => f.groupId === groupId);
+}
+
+async function loadCustomEmissionFactors() {
+  const { data: userData, error: uErr } = await supabase.auth.getUser();
+  if (uErr || !userData?.user) {
+    customEmissionFactorsList = [];
+    return;
+  }
+  const { data, error } = await supabase
+    .from("custom_emission_factors")
+    .select("*")
+    .eq("user_id", userData.user.id)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("custom_emission_factors:", error);
+    customEmissionFactorsList = [];
+    return;
+  }
+  customEmissionFactorsList = (data ?? [])
+    .map(normalizeCustomFactorRow)
+    .filter((f) => f.id && f.groupId && Number.isFinite(f.valueKgCo2ePerUnit));
+}
+
+/**
+ * @param {string} userId
+ * @param {string} groupId
+ * @param {ReturnType<typeof readEntryFromBlock>} entry
+ */
+async function tryInsertCustomFactorIfNew(userId, groupId, entry) {
+  if (entry.factorMode !== "custom") return;
+  const label = (entry.customUnitLabel || "").trim();
+  const source = (entry.customSourceNote || "").trim();
+  const v = parseNum(entry.customFactorKgPerUnit);
+  const activityUnit = label;
+  if (!label || !Number.isFinite(v) || v <= 0) return;
+
+  const { data: dup } = await supabase
+    .from("custom_emission_factors")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("group_id", groupId)
+    .eq("label", label)
+    .eq("value_kg_co2e_per_unit", v)
+    .eq("activity_unit", activityUnit)
+    .eq("source", source)
+    .maybeSingle();
+  if (dup) return;
+
+  const { error } = await supabase.from("custom_emission_factors").insert({
+    user_id: userId,
+    label,
+    value_kg_co2e_per_unit: v,
+    activity_unit: activityUnit,
+    source,
+    group_id: groupId,
+  });
+  if (error) console.error("custom_emission_factors insert:", error);
+}
+
+/**
+ * @param {"scope1"|"scope2"|"scope3"} scopeKey
+ * @param {ReturnType<typeof emptyState>} st
+ * @param {string} userId
+ */
+async function persistCustomFactorsForSavedScope(scopeKey, st, userId) {
+  if (scopeKey === "scope1") {
+    for (const cat of ["stationary", "mobile", "fugitive"]) {
+      await tryInsertCustomFactorIfNew(
+        userId,
+        categoryToGroupId("scope1", cat),
+        st.scope1[cat]
+      );
+    }
+  } else if (scopeKey === "scope2") {
+    for (const cat of ["locationBased", "marketBased"]) {
+      await tryInsertCustomFactorIfNew(
+        userId,
+        categoryToGroupId("scope2", cat),
+        st.scope2[cat]
+      );
+    }
+  } else if (scopeKey === "scope3") {
+    for (const c of SCOPE3_CATEGORIES) {
+      await tryInsertCustomFactorIfNew(
+        userId,
+        categoryToGroupId("scope3", c.id),
+        st.scope3[c.id]
+      );
+    }
+  }
+}
+
+async function deleteCustomEmissionFactor(id) {
+  const { error } = await supabase
+    .from("custom_emission_factors")
+    .delete()
+    .eq("id", id);
+  if (error) {
+    console.error("custom_emission_factors delete:", error);
+    showToast("Could not delete custom factor.");
+    return;
+  }
+  await loadCustomEmissionFactors();
+  await renderFactorLibrary();
+  renderScope1Entries();
+  renderScope2Entries();
+  renderScope3Fields();
+  refreshDashboard();
+}
+
 function parseNum(v) {
   if (v === "" || v === null || v === undefined) return 0;
   const n = Number(v);
@@ -483,6 +615,11 @@ async function saveEmissionsScope(scopeKey) {
     console.error("emissions_data insert:", insErr);
     return;
   }
+  await persistCustomFactorsForSavedScope(scopeKey, st, userId);
+  await loadCustomEmissionFactors();
+  if (scopeKey === "scope1") renderScope1Entries();
+  else if (scopeKey === "scope2") renderScope2Entries();
+  else renderScope3Fields();
   showToast("Saved");
 }
 
@@ -599,6 +736,21 @@ function bindEntryBlock(el) {
   el.querySelector(".factor-library-select")?.addEventListener("change", apply);
   el.querySelector(".btn-find-factor")?.addEventListener("click", () => {
     openFactorSearchModal(el);
+  });
+  el.querySelector(".saved-custom-factor-select")?.addEventListener("change", (ev) => {
+    const sel = ev.target;
+    if (!(sel instanceof HTMLSelectElement)) return;
+    const id = sel.value;
+    if (!id) return;
+    const f = customEmissionFactorsList.find((x) => x.id === id);
+    if (!f) return;
+    const cf = el.querySelector(".custom-factor");
+    const cu = el.querySelector(".custom-unit-label");
+    const cs = el.querySelector(".custom-source-note");
+    if (cf instanceof HTMLInputElement) cf.value = String(f.valueKgCo2ePerUnit);
+    if (cu instanceof HTMLInputElement) cu.value = f.label;
+    if (cs instanceof HTMLTextAreaElement) cs.value = f.source;
+    apply();
   });
 }
 
@@ -750,6 +902,25 @@ function initReportingPeriodBar() {
   });
 }
 
+function buildSavedCustomFactorFieldHtml(groupId) {
+  const saved = getSavedCustomFactorsForGroup(groupId);
+  if (saved.length === 0) return "";
+  const opts = saved
+    .map(
+      (f) =>
+        `<option value="${escapeHtml(f.id)}">${escapeHtml(f.label)} — ${f.valueKgCo2ePerUnit} kg CO2e per ${escapeHtml(f.activityUnit)}</option>`
+    )
+    .join("");
+  return `
+      <div class="field custom-saved-factors-field">
+        <label>Saved custom factors</label>
+        <select class="saved-custom-factor-select">
+          <option value="">— Select to fill fields —</option>
+          ${opts}
+        </select>
+      </div>`;
+}
+
 function entryBlockHtml(scope, key, title) {
   const groupId = getEF().getGroupId(scope, key);
   const entry =
@@ -759,6 +930,7 @@ function entryBlockHtml(scope, key, title) {
         ? appState.scope2[key]
         : appState.scope3[key];
   const selOptions = buildFactorSelect(groupId, entry.factorId);
+  const savedCustomFieldHtml = buildSavedCustomFactorFieldHtml(groupId);
   return `
     <div class="entry-block" data-scope="${scope}" data-key="${key}" data-legacy-tco2e="${escapeHtml(
       String(entry.legacyTco2e || "")
@@ -791,6 +963,7 @@ function entryBlockHtml(scope, key, title) {
         <p class="factor-details"></p>
       </div>
       <div class="factor-custom-panel ${entry.factorMode === "default" ? "hidden" : ""}">
+        ${savedCustomFieldHtml}
         <div class="field">
           <label>Custom factor <span class="field-hint">(kg CO2e per unit of activity)</span></label>
           <input type="number" class="custom-factor" min="0" step="any" placeholder="0" value="${escapeHtml(
@@ -863,7 +1036,7 @@ function renderScope3Fields() {
   });
 }
 
-function renderFactorLibrary() {
+async function renderFactorLibrary() {
   const root = document.getElementById("factor-library-root");
   if (!root) return;
   if (isEmissionFactorsLoading()) {
@@ -887,6 +1060,7 @@ function renderFactorLibrary() {
   `;
     return;
   }
+  await loadCustomEmissionFactors();
   const lib = getEF().EMISSION_FACTOR_LIBRARY;
   const rows = lib
     .map(
@@ -902,6 +1076,41 @@ function renderFactorLibrary() {
   `
     )
     .join("");
+  const customRows = customEmissionFactorsList
+    .map(
+      (f) => `
+    <tr>
+      <td>${escapeHtml(f.label)}</td>
+      <td class="num">${f.valueKgCo2ePerUnit}</td>
+      <td>${escapeHtml(f.activityUnit)}</td>
+      <td>${escapeHtml(f.source)}</td>
+      <td>${escapeHtml(f.groupId)}</td>
+      <td><button type="button" class="btn btn-secondary btn-compact btn-delete-custom-ef" data-custom-ef-id="${escapeHtml(f.id)}">Delete</button></td>
+    </tr>
+  `
+    )
+    .join("");
+  const customSection =
+    customEmissionFactorsList.length === 0
+      ? `<p class="panel-desc" style="margin-top:1.25rem;margin-bottom:0">No custom factors saved yet. Save a scope line that uses a custom factor to add one.</p>`
+      : `<div style="margin-top:1.25rem">
+        <h3 style="margin:0 0 0.5rem;font-size:1.05rem;font-weight:600">Your custom emission factors</h3>
+        <div class="table-scroll">
+          <table class="factor-table">
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Value</th>
+                <th>Unit</th>
+                <th>Source</th>
+                <th>Group</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${customRows}</tbody>
+          </table>
+        </div>
+      </div>`;
   root.innerHTML = `
     <div class="table-scroll">
       <table class="factor-table">
@@ -919,7 +1128,14 @@ function renderFactorLibrary() {
       </table>
     </div>
     <p class="panel-desc" style="margin-top:1rem;margin-bottom:0">Figures are illustrative defaults for tool demonstration; use jurisdiction-specific factors for statutory reporting.</p>
+    ${customSection}
   `;
+  root.querySelectorAll(".btn-delete-custom-ef").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-custom-ef-id");
+      if (id) void deleteCustomEmissionFactor(id);
+    });
+  });
 }
 
 function refreshDashboard() {
@@ -966,7 +1182,9 @@ function showNav(sectionId) {
 function initNavigation() {
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      showNav(btn.getAttribute("data-nav"));
+      const nav = btn.getAttribute("data-nav");
+      showNav(nav);
+      if (nav === "factors") void renderFactorLibrary();
     });
   });
 }
@@ -1408,8 +1626,9 @@ async function bootstrapApp() {
   wipeLegacyAppStorageKeys();
   ghgRoot = createEmptyGhgRoot();
   await fetchReportingPeriodsFromSupabase();
+  await loadCustomEmissionFactors();
   syncAppStateFromRoot();
-  renderFactorLibrary();
+  await renderFactorLibrary();
   renderScope1Entries();
   renderScope2Entries();
   renderScope3Fields();
@@ -1429,7 +1648,8 @@ async function bootstrapApp() {
   }
 
   await fetchEmissionsForSelectedPeriod();
-  renderFactorLibrary();
+  await loadCustomEmissionFactors();
+  await renderFactorLibrary();
   renderScope1Entries();
   renderScope2Entries();
   renderScope3Fields();

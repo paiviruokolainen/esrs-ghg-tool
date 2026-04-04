@@ -3,6 +3,18 @@
  */
 
 import {
+  AlignmentType,
+  Document,
+  HeadingLevel,
+  Packer,
+  Paragraph,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+  WidthType,
+} from "docx";
+import {
   applyEmissionFactorsFromRows,
   isEmissionFactorsLoading,
 } from "./emission-factors.js";
@@ -1432,6 +1444,47 @@ function pdfAddLines(doc, lines, margin, startY, line, pageW) {
   return y;
 }
 
+/**
+ * @param {ReturnType<typeof emptyEntry>} entry
+ * @param {string} categoryTitle
+ */
+function pdfBuildFactorUsedRow(entry, categoryTitle) {
+  const activity = parseNum(entry.activity);
+  if (activity <= 0) return null;
+  const EF = getEF();
+  if (entry.factorMode === "custom") {
+    const v = parseNum(entry.customFactorKgPerUnit);
+    const u = (entry.customUnitLabel || "").trim() || "—";
+    return {
+      category: categoryTitle,
+      factorType: "Custom",
+      factorLabel: u,
+      value: Number.isFinite(v) ? String(v) : "—",
+      unit: u,
+      source: (entry.customSourceNote || "").trim() || "—",
+    };
+  }
+  const def = entry.factorId ? EF.getFactorById(entry.factorId) : null;
+  if (!def) {
+    return {
+      category: categoryTitle,
+      factorType: "Built-in",
+      factorLabel: "—",
+      value: "—",
+      unit: "—",
+      source: "—",
+    };
+  }
+  return {
+    category: categoryTitle,
+    factorType: "Built-in",
+    factorLabel: def.label,
+    value: String(def.valueKgCo2ePerUnit),
+    unit: def.activityUnit,
+    source: def.source,
+  };
+}
+
 function buildPdfReportInternal(JsPDF) {
   const doc = new JsPDF({ unit: "mm", format: "a4" });
   const margin = 18;
@@ -1455,10 +1508,7 @@ function buildPdfReportInternal(JsPDF) {
   doc.setTextColor(92, 107, 127);
   y = pdfAddLines(
     doc,
-    [
-      "GHG Protocol scopes · Values in tCO2e · ESRS E1 (climate change — GHG emissions).",
-      "Emission factors: each line shows default (library) or custom factor used.",
-    ],
+    ["GHG Protocol · Values in tCO2e · Emission factors shown per category"],
     margin,
     y,
     line,
@@ -1613,9 +1663,362 @@ function buildPdfReportInternal(JsPDF) {
   showToast("PDF report downloaded.");
 }
 
+async function fetchCompanyNameForGhgReport() {
+  try {
+    const year = ghgRoot?.selectedPeriod;
+    const periodId = year ? ghgRoot.periodIdByYear[year] : null;
+    if (!periodId) return "";
+    const { data: userData, error: uErr } = await supabase.auth.getUser();
+    if (uErr || !userData?.user) return "";
+    const { data, error } = await supabase
+      .from("dma_assessments")
+      .select("company_profile")
+      .eq("reporting_period_id", periodId)
+      .eq("user_id", userData.user.id)
+      .maybeSingle();
+    if (error || !data?.company_profile) return "";
+    const n = data.company_profile.companyName;
+    return typeof n === "string" ? n.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * @param {NonNullable<ReturnType<typeof pdfBuildFactorUsedRow>>[]} rows
+ */
+function docxFactorUsedTable(rows) {
+  const header = [
+    "Category",
+    "Factor type",
+    "Factor label",
+    "Value (kg CO2e per unit)",
+    "Unit",
+    "Source",
+  ];
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({
+        children: header.map(
+          (h) =>
+            new TableCell({
+              children: [
+                new Paragraph({
+                  children: [new TextRun({ text: h, bold: true })],
+                }),
+              ],
+            })
+        ),
+      }),
+      ...rows.map(
+        (r) =>
+          new TableRow({
+            children: [r.category, r.factorType, r.factorLabel, r.value, r.unit, r.source].map(
+              (c) =>
+                new TableCell({
+                  children: [
+                    new Paragraph({
+                      children: [new TextRun(String(c ?? ""))],
+                    }),
+                  ],
+                })
+            ),
+          })
+      ),
+    ],
+  });
+}
+
+function docxSummaryTable(t1, t2, t3, grand) {
+  const dataRows = [
+    ["Scope 1 — Direct emissions", `${formatTco2e(t1)} tCO2e`],
+    ["Scope 2 — Indirect emissions (energy)", `${formatTco2e(t2)} tCO2e`],
+    ["Scope 3 — Other indirect emissions", `${formatTco2e(t3)} tCO2e`],
+    ["Total", `${formatTco2e(grand)} tCO2e`],
+  ];
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: dataRows.map(
+      (cells, ri) =>
+        new TableRow({
+          children: cells.map(
+            (text) =>
+              new TableCell({
+                children: [
+                  new Paragraph({
+                    children: [new TextRun({ text, bold: ri === 3 })],
+                  }),
+                ],
+              })
+          ),
+        })
+    ),
+  });
+}
+
+/**
+ * @param {NonNullable<ReturnType<typeof pdfBuildFactorUsedRow>>[]} rows
+ */
+function docxEmissionFactorsUsedSection(rows) {
+  const blocks = [
+    new Paragraph({
+      heading: HeadingLevel.HEADING_2,
+      children: [new TextRun("Emission factors used")],
+    }),
+  ];
+  if (rows.length === 0) {
+    blocks.push(
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: "No categories with activity data in this scope.",
+            italics: true,
+          }),
+        ],
+      })
+    );
+  } else {
+    blocks.push(docxFactorUsedTable(rows));
+  }
+  blocks.push(
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: "Built-in emission factors sourced from IPCC 2006 Guidelines, IPCC AR6 and GHG Protocol Technical Guidance. Custom factors provided by the reporting entity with documented source.",
+          italics: true,
+        }),
+      ],
+    })
+  );
+  return blocks;
+}
+
+function buildGhgWordDocumentChildren(companyName) {
+  const reportingYear = ghgRoot?.selectedPeriod || "—";
+  const dateStr = new Date().toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  const t1 = scope1Total(appState.scope1);
+  const t2 = scope2Total(appState.scope2);
+  const t3 = scope3Total(appState.scope3);
+  const grand = t1 + t2 + t3;
+
+  /** @type {(import("docx").Paragraph | import("docx").Table)[]} */
+  const children = [
+    new Paragraph({
+      heading: HeadingLevel.TITLE,
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun("GHG Emissions Report")],
+    }),
+  ];
+
+  if (companyName) {
+    children.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun(companyName)],
+      })
+    );
+  }
+
+  children.push(
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun(`Reporting period: ${reportingYear}`)],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun(`Date: ${dateStr}`)],
+    }),
+    new Paragraph({ children: [new TextRun("")] }),
+    new Paragraph({
+      children: [
+        new TextRun(
+          "GHG Protocol scopes · Values in tCO2e · ESRS E1 (climate change — GHG emissions)."
+        ),
+      ],
+    }),
+    new Paragraph({
+      children: [
+        new TextRun(
+          "Emission factors: each line shows default (library) or custom factor used."
+        ),
+      ],
+    }),
+    new Paragraph({ children: [new TextRun("")] }),
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun("Totals by scope")],
+    }),
+    docxSummaryTable(t1, t2, t3, grand),
+    new Paragraph({ children: [new TextRun("")] })
+  );
+
+  const scope1Labels = [
+    ["stationary", "Stationary combustion"],
+    ["mobile", "Mobile combustion"],
+    ["fugitive", "Fugitive emissions"],
+  ];
+  children.push(
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun("Scope 1 — Detail & emission factors")],
+    })
+  );
+  scope1Labels.forEach(([k, label]) => {
+    const ent = appState.scope1[k];
+    const val = entryTco2e(ent);
+    children.push(
+      new Paragraph({
+        children: [
+          new TextRun({ text: `${label}: `, bold: true }),
+          new TextRun(`${formatTco2e(val)} tCO2e`),
+        ],
+      })
+    );
+    pdfFactorLines(ent).forEach((ln) => {
+      children.push(
+        new Paragraph({
+          indent: { left: 360 },
+          children: [new TextRun(`· ${ln}`)],
+        })
+      );
+    });
+  });
+  const scope1FactorRows = scope1Labels
+    .map(([k, lab]) => pdfBuildFactorUsedRow(appState.scope1[k], lab))
+    .filter((r) => r != null);
+  children.push(...docxEmissionFactorsUsedSection(scope1FactorRows));
+  children.push(new Paragraph({ children: [new TextRun("")] }));
+
+  children.push(
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun("Scope 2 — Detail & emission factors")],
+    })
+  );
+  [
+    ["locationBased", "Location-based electricity"],
+    ["marketBased", "Market-based electricity"],
+  ].forEach(([k, label]) => {
+    const ent = appState.scope2[k];
+    const val = entryTco2e(ent);
+    children.push(
+      new Paragraph({
+        children: [
+          new TextRun({ text: `${label}: `, bold: true }),
+          new TextRun(`${formatTco2e(val)} tCO2e`),
+        ],
+      })
+    );
+    pdfFactorLines(ent).forEach((ln) => {
+      children.push(
+        new Paragraph({
+          indent: { left: 360 },
+          children: [new TextRun(`· ${ln}`)],
+        })
+      );
+    });
+  });
+  const scope2FactorRows = [
+    pdfBuildFactorUsedRow(
+      appState.scope2.locationBased,
+      "Location-based electricity"
+    ),
+    pdfBuildFactorUsedRow(appState.scope2.marketBased, "Market-based electricity"),
+  ].filter((r) => r != null);
+  children.push(...docxEmissionFactorsUsedSection(scope2FactorRows));
+  children.push(new Paragraph({ children: [new TextRun("")] }));
+
+  children.push(
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun("Scope 3 — Categories, totals & emission factors")],
+    })
+  );
+  SCOPE3_CATEGORIES.forEach((c, idx) => {
+    const ent = appState.scope3[c.id];
+    const val = entryTco2e(ent);
+    children.push(
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: `${idx + 1}. ${c.name}: `,
+            bold: true,
+          }),
+          new TextRun(`${formatTco2e(val)} tCO2e`),
+        ],
+      })
+    );
+    pdfFactorLines(ent).forEach((ln) => {
+      children.push(
+        new Paragraph({
+          indent: { left: 360 },
+          children: [new TextRun(`· ${ln}`)],
+        })
+      );
+    });
+  });
+  const scope3FactorRows = SCOPE3_CATEGORIES.map((c) =>
+    pdfBuildFactorUsedRow(appState.scope3[c.id], c.name)
+  ).filter((r) => r != null);
+  children.push(...docxEmissionFactorsUsedSection(scope3FactorRows));
+
+  children.push(
+    new Paragraph({ children: [new TextRun("")] }),
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: "Prepared using ESG Reporting Suite. Based on GHG Protocol.",
+          italics: true,
+        }),
+      ],
+    })
+  );
+
+  return children;
+}
+
+async function buildGhgWordReport() {
+  try {
+    const companyName = await fetchCompanyNameForGhgReport();
+    const children = buildGhgWordDocumentChildren(companyName);
+    const doc = new Document({
+      sections: [{ children }],
+    });
+    const blob = await Packer.toBlob(doc);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ghg-emissions-report-${new Date().toISOString().slice(0, 10)}.docx`;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast("Word report downloaded.");
+  } catch (err) {
+    console.error(err);
+    showToast(
+      err && typeof err === "object" && "message" in err && err.message
+        ? `Word error: ${err.message}`
+        : "Could not create Word report."
+    );
+  }
+}
+
 function initPdfButton() {
   const btn = document.getElementById("btn-download-pdf");
   if (btn) btn.addEventListener("click", buildPdfReport);
+}
+
+function initWordReportButton() {
+  const btn = document.getElementById("btn-download-word");
+  if (btn) btn.addEventListener("click", () => void buildGhgWordReport());
 }
 
 async function bootstrapApp() {
@@ -1635,6 +2038,7 @@ async function bootstrapApp() {
   initReportingPeriodBar();
   initNavigation();
   initPdfButton();
+  initWordReportButton();
   initScopeSaveButtons();
   refreshDashboard();
 

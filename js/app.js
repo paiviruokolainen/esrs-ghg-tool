@@ -10,6 +10,7 @@ import { initAuth } from "./auth.js";
 import { supabase } from "./supabase.js";
 import { searchEmissionFactors } from "./rag-search.js";
 import { initDma } from "./dma.js";
+import { initGapAssessment } from "./gap-assessment.js";
 
 
 const LEGACY_STORAGE_KEYS = ["ghg-tool-emissions-v1", "ghg-tool-emissions-v2"];
@@ -1435,6 +1436,7 @@ async function bootstrapApp() {
   refreshDashboard();
 
   initDma(supabase);
+  initGapAssessment(supabase);
 }
 
 initAuth(bootstrapApp);

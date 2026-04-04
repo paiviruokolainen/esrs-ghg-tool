@@ -45,6 +45,20 @@ with no coding background — and what the real limitations are.
   - Export to .docx for professional review
   - Based on amended ESRS 2.0 (draft standards)
 
+- Gap Assessment
+  - Upload existing sustainability report PDF
+  - Evaluated against approved DMA DR list
+  - Uses actual amended ESRS 2.0 requirement text
+  - Results: Present / Partial / Missing per DR
+  - Contextual AI Q&A on Missing and Partial DRs
+  - Export to .docx
+  - Based on amended ESRS 2.0 (draft standards)
+
+- ESRS Document Pipeline
+  - ESRS PDFs chunked by Disclosure Requirement
+  - Embeddings stored in Supabase pgvector
+  - Covers amended ESRS 2 and ESRS E1
+
 ---
 
 ## Standards alignment
@@ -66,10 +80,10 @@ with no coding background — and what the real limitations are.
 - User authentication working (email/password)
 - Emissions data saved per user and reporting period
 - Reporting periods managed in database
-- DMA tool complete for ESRS 2 and E1
-- More ESRS standards coming in future releases
-- Based on amended ESRS 2.0 draft — 
-  not yet legally binding
+
+- Full CSRD platform: DMA + Gap Assessment complete
+- Carbon accounting with RAG emission factor search
+- All data persisted to Supabase per user and period
 
 ---
 

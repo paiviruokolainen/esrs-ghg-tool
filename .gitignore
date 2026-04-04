@@ -70,6 +70,7 @@ web_modules/
 .env.*
 !.env.example
 
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
@@ -137,3 +138,6 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# ESRS source documents (large PDFs, not for version control)
+esrs-docs/

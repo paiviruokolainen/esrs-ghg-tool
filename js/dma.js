@@ -1671,7 +1671,6 @@ export function initDma(supabase) {
     root.innerHTML = `
       <div class="dma-shell">
         <p id="dma-flow-message" class="hidden" role="status" style="margin:0 0 1rem;font-size:0.8125rem;max-width:36rem;line-height:1.4;"></p>
-        <p class="panel-desc dma-ar-note">Top-down DMA only (amended ESRS 1 AR 17). Tool scope: ESRS 2 general disclosures and ESRS E1 climate change (draft ESRS 2.0).</p>
         ${renderProgress()}
         ${step === 1 ? renderStep1() : ""}
         ${step === 2 ? renderStep2() : ""}

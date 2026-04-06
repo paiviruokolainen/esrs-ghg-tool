@@ -1,20 +1,25 @@
-/* GHG Emissions Tool — minimal professional palette */
+/* GHG Emissions Tool — forest green + warm off-white */
 
 :root {
-  --bg: #f4f6f9;
+  --bg: #f5f4f0;
   --surface: #ffffff;
   --text: #1a2332;
   --text-muted: #5c6b7f;
-  --border: #e2e8f0;
-  --accent: #1e3a5f;
-  --accent-hover: #2d4a73;
-  --scope1: #2563eb;
-  --scope2: #0891b2;
-  --scope3: #64748b;
-  --success: #0d9488;
+  --border: #e8e4dc;
+  --accent: #2d6a4f;
+  --accent-hover: #52b788;
+  --accent-muted: #e8f5ee;
+  --sidebar-bg: #f8f6f1;
+  --header-bg: #2d6a4f;
+  /* Scope dashboard / charts — forest green family */
+  --scope1: #1b4332;
+  --scope2: #2d6a4f;
+  --scope3: #52b788;
+  --success: #2d6a4f;
   --radius: 8px;
   --shadow: 0 1px 3px rgba(26, 35, 50, 0.08);
-  --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font: "DM Sans", system-ui, -apple-system, sans-serif;
+  --focus-ring: rgba(45, 106, 79, 0.25);
 }
 
 *,
@@ -37,31 +42,55 @@ body {
   line-height: 1.5;
 }
 
+.main a {
+  color: var(--accent);
+}
+
+.main a:hover {
+  color: var(--accent-hover);
+}
+
 .app-header {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  background: var(--header-bg);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
   padding: 1rem 1.5rem;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  box-shadow: var(--shadow);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
 .app-title {
   margin: 0;
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: var(--accent);
+  font-size: 1.45rem;
+  font-weight: 700;
+  color: #fff;
   letter-spacing: -0.02em;
+}
+
+.app-title-emoji {
+  margin-right: 0.35rem;
 }
 
 .app-subtitle {
   margin: 0.15rem 0 0;
   font-size: 0.8rem;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.88);
   font-weight: 400;
+}
+
+.app-header .btn-secondary {
+  background: transparent;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.app-header .btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.65);
+  color: #fff;
 }
 
 .header-actions {
@@ -103,6 +132,11 @@ body {
 .btn-secondary:hover {
   background: var(--bg);
   border-color: var(--text-muted);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .auth-screen {
@@ -150,7 +184,7 @@ body {
 
 .user-email {
   font-size: 0.85rem;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.9);
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -183,8 +217,8 @@ body {
 }
 
 .nav-section + .nav-section {
-  margin-top: 1rem;
-  padding-top: 0.75rem;
+  margin-top: 1.15rem;
+  padding-top: 0.9rem;
   border-top: 1px solid var(--border);
 }
 
@@ -192,8 +226,8 @@ body {
   font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: #94a3b8;
-  padding: 0 1rem 0.45rem;
+  color: var(--accent);
+  padding: 0 1rem 0.65rem;
   font-weight: 600;
 }
 
@@ -224,13 +258,14 @@ body {
 
 .nav-btn:hover {
   color: var(--text);
-  background: rgba(30, 58, 95, 0.06);
+  background: rgba(45, 106, 79, 0.07);
 }
 
 .nav-btn[aria-current="page"] {
   color: var(--accent);
   font-weight: 600;
-  background: rgba(30, 58, 95, 0.08);
+  background: var(--accent-muted);
+  border-left-width: 4px;
   border-left-color: var(--accent);
 }
 
@@ -250,7 +285,7 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow), 0 4px 14px rgba(45, 106, 79, 0.07);
 }
 
 .reporting-period-label {
@@ -273,7 +308,7 @@ body {
 .reporting-period-select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(30, 58, 95, 0.12);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .btn-compact {
@@ -387,7 +422,7 @@ body {
 }
 
 .total-card.grand {
-  border-left: 4px solid var(--success);
+  border-left: 4px solid var(--accent);
   grid-column: span 1;
 }
 
@@ -459,15 +494,15 @@ body {
 }
 
 .chart-fill.s1 {
-  background: linear-gradient(90deg, var(--scope1), #3b82f6);
+  background: linear-gradient(90deg, var(--scope1), #2d6a4f);
 }
 
 .chart-fill.s2 {
-  background: linear-gradient(90deg, var(--scope2), #06b6d4);
+  background: linear-gradient(90deg, var(--scope2), #40916c);
 }
 
 .chart-fill.s3 {
-  background: linear-gradient(90deg, var(--scope3), #94a3b8);
+  background: linear-gradient(90deg, var(--scope3), #74c69d);
 }
 
 .chart-num {
@@ -520,7 +555,7 @@ body {
 .field input[type="password"]:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.12);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .field select,
@@ -539,7 +574,7 @@ body {
 .field textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.12);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .field textarea {
@@ -644,8 +679,8 @@ body {
 }
 
 .factor-badge--default {
-  background: rgba(37, 99, 235, 0.12);
-  color: var(--scope1);
+  background: rgba(45, 106, 79, 0.14);
+  color: var(--scope2);
 }
 
 .factor-badge--custom {
@@ -817,10 +852,6 @@ body {
 /* DMA — Double Materiality Assessment */
 .dma-shell {
   max-width: 720px;
-}
-
-.dma-ar-note {
-  margin-bottom: 1rem;
 }
 
 .dma-progress {

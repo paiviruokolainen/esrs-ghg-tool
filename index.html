@@ -4,6 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GHG Emissions — Scope 1–3</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="css/styles.css" />
   </head>
   <body>
@@ -40,7 +46,9 @@
     <div id="app-root" class="hidden">
     <header class="app-header">
       <div>
-        <h1 class="app-title">ESG Reporting Suite</h1>
+        <h1 class="app-title">
+          <span class="app-title-emoji" aria-hidden="true">🌿</span> ESG Reporting Suite
+        </h1>
         <p class="app-subtitle">
           GHG Protocol · ESRS 2.0 (draft)
         </p>
@@ -66,7 +74,7 @@
           </div>
           <div class="nav-section">
             <div class="nav-section-label">CSRD reporting</div>
-            <button type="button" class="nav-btn" data-nav="csrd-assistant">Double Materiality Assessment</button>
+            <button type="button" class="nav-btn" data-nav="csrd-assistant">DMA</button>
             <button type="button" class="nav-btn" data-nav="gap-assessment">Gap Assessment</button>
           </div>
         </nav>
@@ -110,8 +118,6 @@
           </div>
           <p class="panel-desc">
             Totals are the sum of calculated tCO2e from each line (activity × emission factor ÷ 1000).
-            Legacy-only values from an older version of the tool are included until you enter activity and a
-            factor.
           </p>
 
           <div class="totals-grid">
@@ -214,7 +220,7 @@
         </section>
 
         <section id="section-csrd-assistant" class="panel hidden" data-section>
-          <h2>Double materiality assessment</h2>
+          <h2>Double Materiality Assessment</h2>
           <p class="panel-desc">
             Top-down DMA (amended ESRS 1 AR 17). This release covers ESRS 2 general disclosures and ESRS E1
             climate change. Progress is saved per reporting period.
